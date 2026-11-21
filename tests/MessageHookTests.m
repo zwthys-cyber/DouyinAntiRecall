@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import "DARCache.h"
+#import "DARBadge.h"
 extern BOOL DARInstallForTesting(void);
 
 static void Check(BOOL condition, NSString *message) {
@@ -37,8 +38,10 @@ static void Check(BOOL condition, NSString *message) {
 @property(nonatomic) BOOL recalled;
 @property(nonatomic) NSUInteger calls;
 - (void)applyLogicWithModel_DouYin:(id)model;
+- (NSDictionary *)syncedExt;
 @end
 @implementation TIMXOMessage
+- (NSDictionary *)syncedExt { return self.lastModel.extDictionary; }
 - (void)applyLogicWithModel_DouYin:(id)model {
     self.calls++;
     self.lastModel = model;
@@ -68,18 +71,17 @@ int main(void) {
                                      @"s:recall_role": @1, @"business": @"unchanged"};
         TestModel *recall = Model(identifier, 2002, recallExt, @{});
         [message applyLogicWithModel_DouYin:recall];
-        NSDictionary *markedBody = @{@"text": @"retained text\n【对方已撤回】", @"nullable": NSNull.null};
-        Check(!message.recalled && [message.content isEqual:markedBody], @"incoming recall restores content with visible status");
-        Check([normal.contentDictionary isEqual:body], @"visible marker never mutates the original content");
+        NSDictionary *markedBody = body;
+        Check(!message.recalled && [message.content isEqual:markedBody], @"incoming recall retains unmodified content");
+        Check([normal.contentDictionary isEqual:body], @"badge never mutates the original content");
         [message applyLogicWithModel_DouYin:recall];
-        Check([message.content isEqual:markedBody], @"repeated recall does not duplicate the marker");
+        Check([message.content isEqual:markedBody], @"repeated recall never adds text");
+        Check(DARHasRecallBadge(message), @"retained messages carry a separate display status");
         Check(message.lastModel != recall && [recall.extDictionary isEqual:recallExt], @"upstream model never mutated");
         Check([message.lastModel.extDictionary[@"business"] isEqual:@"unchanged"], @"unrelated metadata preserved");
         Check(message.calls == 3, @"one original call per update");
         [message applyLogicWithModel_DouYin:Model(NSUUID.UUID.UUIDString, 2002, recallExt, @{@"text": @"present"})];
-        Check(!message.recalled && [message.content[@"text"] isEqual:@"present\n【对方已撤回】"], @"marks content still present without cache");
-        [message applyLogicWithModel_DouYin:Model(NSUUID.UUID.UUIDString, 2002, recallExt, @{@"text": @"present\n【对方已撤回】"})];
-        Check([message.content[@"text"] isEqual:@"present\n【对方已撤回】"], @"already marked content stays idempotent");
+        Check(!message.recalled && [message.content[@"text"] isEqual:@"present"], @"retains original content without a text marker");
         NSDictionary *mention = @{@"text": @"@friend hello", @"mentions": @[@{@"offset": @0, @"length": @7}]};
         [message applyLogicWithModel_DouYin:Model(NSUUID.UUID.UUIDString, 2002, recallExt, mention)];
         Check([message.content[@"text"] hasPrefix:mention[@"text"]] &&
@@ -87,10 +89,12 @@ int main(void) {
         NSDictionary *media = @{@"resource": @{@"uri": @"example"}, @"text": NSNull.null};
         [message applyLogicWithModel_DouYin:Model(NSUUID.UUID.UUIDString, 2002, recallExt, media)];
         Check(!message.recalled && [message.content isEqual:media], @"media and non-string text payloads stay intact");
+        Check(DARHasRecallBadge(message), @"retained media also carries display status");
         [message applyLogicWithModel_DouYin:Model(NSUUID.UUID.UUIDString, 2002, recallExt, @{})];
         Check(message.recalled, @"missing original content leaves recall unchanged");
         [message applyLogicWithModel_DouYin:Model(identifier, 1001, recallExt, body)];
         Check(message.recalled, @"outgoing recalls remain enabled");
+        Check(!DARHasRecallBadge(message), @"outgoing messages never carry a recall badge");
         Check([message.lastModel.contentDictionary isEqual:body], @"outgoing recalls never gain the marker");
         NSMutableDictionary *selfRecall = [recallExt mutableCopy]; selfRecall[@"s:recall_uid"] = @"1001";
         [message applyLogicWithModel_DouYin:Model(identifier, 2002, selfRecall, body)];
@@ -111,6 +115,7 @@ int main(void) {
         [message applyLogicWithModel_DouYin:Model(identifier, 2002, @{@"s:is_recalled": NSNull.null}, body)];
         Check(!message.recalled, @"malformed flag does not enter recall path");
         Check([message.content isEqual:body], @"ordinary messages remain unmarked");
+        Check(!DARHasRecallBadge(message), @"ordinary updates clear the previous display status");
         NSURL *file = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
                        URLByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingString:@".json"]];
         DARCache *cache = [[DARCache alloc] initWithURL:file];

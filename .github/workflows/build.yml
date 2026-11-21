@@ -14,6 +14,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run message conversion and cache regression tests
         run: bash tools/test-macos.sh
+      - name: Test badge layout and cell reuse in iOS simulator
+        run: bash tools/test-ui-simulator.sh
       - name: Build and verify arm64 iOS dylib
         run: bash tools/build.sh
       - name: Prepare installable plugin package

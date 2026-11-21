@@ -3,6 +3,7 @@
 #import <objc/message.h>
 #import <os/log.h>
 #import "DARCache.h"
+#import "DARBadge.h"
 #include <string.h>
 
 // Deliberately scoped to the metadata in AwemeCore 41.2.0 / 412021.
@@ -47,16 +48,12 @@ static BOOL DARRecalled(NSDictionary *ext) {
     id value = ext[@"s:is_recalled"];
     return ([value isKindOfClass:NSString.class] || [value isKindOfClass:NSNumber.class]) && [value boolValue];
 }
-static NSDictionary *DARMarkedContent(NSDictionary *content) {
-    // Append instead of prefixing so existing mention/text offsets remain valid.
-    // Non-text payloads retain their schema and media behaviour.
-    id text = content[@"text"];
-    if (![text isKindOfClass:NSString.class] || ![text length]) return content;
-    NSString *marker = @"\n【对方已撤回】";
-    if ([text hasSuffix:marker]) return content;
-    NSMutableDictionary *marked = [content mutableCopy];
-    marked[@"text"] = [text stringByAppendingString:marker];
-    return [marked copy];
+NSString *const DARRecallStatusKey = @"dar_retained_recall_v2";
+BOOL DARHasRecallBadge(id message) {
+    id ext = DARObject(message, @"syncedExt");
+    if (![ext isKindOfClass:NSDictionary.class]) return NO;
+    id value = ext[DARRecallStatusKey];
+    return ([value isKindOfClass:NSNumber.class] || [value isKindOfClass:NSString.class]) && [value boolValue];
 }
 static NSString *DARKey(long long account, id model) {
     id conversation = DARObject(model, @"belongingConversationIdentifier");
@@ -94,8 +91,9 @@ static id DARPrepareModel(id message, id model) {
     if (!copy || copy == model) return model;
     NSMutableDictionary *clean = [ext mutableCopy];
     [clean removeObjectsForKeys:@[@"s:is_recalled", @"s:recall_role", @"s:recall_uid"]];
+    clean[DARRecallStatusKey] = @"1";
     if (!DARObjectSetter(copy, @"setExtDictionary:", clean) ||
-        !DARObjectSetter(copy, @"setContentDictionary:", DARMarkedContent(original))) return model;
+        !DARObjectSetter(copy, @"setContentDictionary:", original)) return model;
     os_log_info(DARLog, "Retained incoming recalled message locally");
     return copy;
 }
@@ -144,10 +142,15 @@ __attribute__((constructor)) static void DARInitialize(void) {
         }
         // Constructors can run before all ObjC classes have registered. Retry on main queue.
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (DARInstall()) return;
+            BOOL messageReady = DARInstall();
+            BOOL badgeReady = DARInstallBadgeHooks();
+            if (messageReady && badgeReady) return;
             for (int seconds = 1; seconds <= 10; seconds++) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, seconds * NSEC_PER_SEC),
-                               dispatch_get_main_queue(), ^{ (void)DARInstall(); });
+                               dispatch_get_main_queue(), ^{
+                                   (void)DARInstall();
+                                   (void)DARInstallBadgeHooks();
+                               });
             }
         });
     }

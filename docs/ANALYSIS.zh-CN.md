@@ -48,3 +48,13 @@
 ## v0.1.1 撤回状态提示
 
 检测到他人撤回并成功保留原内容后，若内容字典的 text 字段为非空 NSString，在其副本末尾附加 `\n【对方已撤回】`。只修改传给原转换方法的副本；缓存仍保持原文，原始 ORM 数据不变。用后缀检查避免重复标识，末尾追加可保留原有文字中的提及偏移。非文字内容保持原数据结构。该新增展示方式仍需真机确认。
+
+## v0.1.2 独立灰色标签
+
+移除 v0.1.1 的文字后缀；只在副本扩展中加入插件字段 `dar_retained_recall_v2=1`。通过 AWEIMMessage.syncedExt 读取展示状态，正文和原文缓存保持不变。
+
+UI 接口静态依据：AWEIMMessageBaseTableViewCell.layoutSubviews (0x22034c5c)、configWithMessage: (0x2203556c)、message (0x220365dc)、viewModel (0x220365f8)、visibleContentView (0x22035a60)、containerView (0x22035ef4)。visibleContentView 为基类接口，实际视图由子类提供；无有效气泡视图时不显示标签。
+
+在布局完成后将一个 UILabel 放入单元格 contentView，字号 10，系统 secondaryLabelColor。优先使用气泡下方空位，次选右侧；空间不足时隐藏，避免覆盖文字或相邻单元格。prepareForReuse 和 configWithMessage: 会立即隐藏旧标签。没有修改行高，不写入服务器或应用的原模型。
+
+模拟器测试使用已观察接口的模拟聊天单元格验证 UIKit 布局及复用，不代表已经覆盖抖音所有实际单元格子类；新增标签需要真机验收。
