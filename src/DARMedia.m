@@ -97,7 +97,14 @@ static NSDictionary *DARExifFromISODate(NSString *value) {
     return DARDateFromExif(fields)?fields:nil;
 }
 static NSDictionary *DARCaptureFields(NSData *data) {
-    NSDictionary *exif=DARPhotoExif(data);if(DARDateFromExif(exif))return exif;
+    NSDictionary *exif=DARPhotoExif(data);
+    NSString *dateKey=(__bridge NSString *)kCGImagePropertyExifDateTimeOriginal;
+    NSString *zoneKey=(__bridge NSString *)kCGImagePropertyExifOffsetTimeOriginal;
+    BOOL hasExifDate=DARDateFromExif(exif)!=nil;
+    // Image I/O can synthesize XMP from EXIF. Do not let that derivative
+    // silently normalize an explicitly invalid original date or timezone.
+    if(exif[dateKey] && !hasExifDate)return nil;
+    if(hasExifDate && exif[zoneKey])return exif;
     if(!data.length)return nil;
     CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)data,NULL);if(!source)return nil;
     CGImageMetadataRef metadata=CGImageSourceCopyMetadataAtIndex(source,0,NULL);
@@ -108,6 +115,14 @@ static NSDictionary *DARCaptureFields(NSData *data) {
             fields=DARExifFromISODate(value);if(fields)break;
         }
         CFRelease(metadata);
+    }
+    if(hasExifDate) {
+        if([fields[dateKey] isEqual:exif[dateKey]]) {
+            NSMutableDictionary *enriched=[exif mutableCopy];
+            for(NSString *key in @[zoneKey,(__bridge NSString *)kCGImagePropertyExifSubsecTimeOriginal])
+                if(!enriched[key] && fields[key])enriched[key]=fields[key];
+            fields=enriched;
+        } else fields=exif;
     }
     if(!fields) {
         NSDictionary *properties=CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source,0,NULL));

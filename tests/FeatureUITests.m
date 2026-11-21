@@ -181,7 +181,7 @@ static void TestOtherPhotoDates(NSData *pixels) {
         NSData *xmp=OtherDateFixture(pixels,nil,path,@"2022-03-04T12:13:14.125+08:00");
         NSDate *expected=[UTCDate(2022,3,4,4,13,14) dateByAddingTimeInterval:0.125];
         NSDate *actual=DARPhotoCaptureDate(xmp);
-        FCheck(actual && fabs([actual timeIntervalSinceDate:expected])<0.001,@"XMP capture date honors fractional seconds and timezone");
+        FCheck(actual && fabs([actual timeIntervalSinceDate:expected])<0.001,[NSString stringWithFormat:@"XMP capture date honors fractional seconds and timezone: %@ actual=%@ expected=%@",path,actual,expected]);
         NSDate *converted=DARPhotoCaptureDate(DARPhotoCompatibleJPEG(xmp));
         FCheck(converted && fabs([converted timeIntervalSinceDate:expected])<0.001,@"XMP capture date survives JPEG compatibility conversion");
     }
@@ -223,7 +223,7 @@ static void TestPhotoCaptureDates(NSData *pixels) {
                                   @{dateKey:@"2024:01:01 25:00:00"},@{dateKey:@"invalid"},
                                   @{dateKey:@"2024:01:01 00:00:00",offsetKey:@"+15:00"},
                                   @{dateKey:@"2024:01:01 00:00:00",offsetKey:@"+08:90"}]) {
-        FCheck(!DARPhotoCaptureDate(PhotoDateFixture(pixels,invalid,nil)),@"invalid or empty capture timestamps are not used as photo dates");
+        FCheck(!DARPhotoCaptureDate(PhotoDateFixture(pixels,invalid,nil)),[NSString stringWithFormat:@"invalid or empty capture timestamps are not used as photo dates: %@",invalid]);
     }
     NSData *edited=PhotoDateFixture(pixels,@{(__bridge NSString *)kCGImagePropertyExifDateTimeDigitized:@"2024:01:01 12:00:00"},
                                    @{(__bridge NSString *)kCGImagePropertyTIFFDateTime:@"2025:01:01 12:00:00"});
