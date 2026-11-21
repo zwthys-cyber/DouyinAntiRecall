@@ -20,8 +20,9 @@ function run(plist, truncated = false) {
   return text;
 }
 const secrets = { session_key: 'PRIVATE-SESSION', access_token: 'PRIVATE-ACCESS', phone_number: 'PRIVATE-PHONE' };
-const normal = run({ ...secrets, BDUGPushDeviceToken: 'PRIVATE-PUSH', BDUGPushVersionCodeKey: '412021', BDUGPushUploadTokenTimestampKey: 1795250000 });
-assert(normal.includes('存在（内容隐藏）') && normal.includes('412021') && normal.includes('UTC'));
+const normal = run({ ...secrets, BDUGPushDeviceToken: 'PRIVATE-PUSH', BDUGPushVersionCodeKey: '20140633', BDUGPushUploadTokenTimestampKey: 1795250000 });
+assert(normal.includes('存在（内容隐藏）') && normal.includes('20140633') && normal.includes('UTC'));
+assert(normal.includes('推送 SDK 版本标识（非抖音版本）') && !normal.includes('缓存宿主版本'));
 const missing = run(secrets);
 assert(missing.includes('未找到') && missing.includes('不证明'));
 assert(run({ BDUGPushDeviceToken: '' }).includes('存在但为空'));
