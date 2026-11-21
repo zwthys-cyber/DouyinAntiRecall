@@ -1,4 +1,6 @@
 #import "DARFeatures.h"
+#import "DARLoginDiagnostics.h"
+#import <libkern/OSByteOrder.h>
 #import "DARImageSave.h"
 #import "PhotoFixture.h"
 #import "DAROptions.h"
@@ -13,6 +15,74 @@ extern void DARFeatureAssert(BOOL,NSString *);
 static void FCheck(BOOL condition,NSString *message) { DARFeatureAssert(condition,message); }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+static NSInteger LoginCentralCalls,Login1049Calls,LoginDecisionCalls;
+static id LoginObservedError,LoginObservedParameters,LoginObservedResponse,LoginObservedDecision;
+@interface IESAccountErrorHandler : NSObject
+- (void)handleError:(id)error extraParams:(id)parameters response:(id)response completion:(void(^)(NSString *))completion;
+- (void)process1049Error:(id)error fullData:(id)data completion:(void(^)(NSString *))completion;
+@end
+@implementation IESAccountErrorHandler
+- (void)handleError:(id)error extraParams:(id)parameters response:(id)response completion:(void(^)(NSString *))completion {
+    LoginCentralCalls++;LoginObservedError=error;LoginObservedParameters=parameters;LoginObservedResponse=response;
+    if(completion)completion(@"central-original");
+}
+- (void)process1049Error:(id)error fullData:(id)data completion:(void(^)(NSString *))completion {
+    Login1049Calls++;LoginObservedError=error;LoginObservedResponse=data;if(completion)completion(@"1049-original");
+}
+@end
+@interface IESAccountIdentityVerificationDecisionDispatcher : NSObject
++ (void)showForceUpdateDecision:(id)decision completion:(void(^)(NSString *))completion;
+@end
+@implementation IESAccountIdentityVerificationDecisionDispatcher
++ (void)showForceUpdateDecision:(id)decision completion:(void(^)(NSString *))completion {
+    LoginDecisionCalls++;LoginObservedDecision=decision;if(completion)completion(@"decision-original");
+}
+@end
+static void DiagnosticPut32(NSMutableData *data,NSUInteger offset,uint32_t value,BOOL big) {
+    uint32_t encoded=big?OSSwapHostToBigInt32(value):OSSwapHostToLittleInt32(value);
+    [data replaceBytesInRange:NSMakeRange(offset,4) withBytes:&encoded];
+}
+static NSData *DiagnosticExecutable(NSDictionary *entitlements) {
+    NSData *xml=[NSPropertyListSerialization dataWithPropertyList:entitlements format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
+    NSMutableData *data=[NSMutableData dataWithLength:64+28+xml.length];
+    DiagnosticPut32(data,0,0xfeedfacf,NO);DiagnosticPut32(data,16,1,NO);DiagnosticPut32(data,20,16,NO);
+    DiagnosticPut32(data,32,0x1d,NO);DiagnosticPut32(data,36,16,NO);DiagnosticPut32(data,40,64,NO);DiagnosticPut32(data,44,(uint32_t)(28+xml.length),NO);
+    DiagnosticPut32(data,64,0xfade0cc0,YES);DiagnosticPut32(data,68,(uint32_t)(28+xml.length),YES);DiagnosticPut32(data,72,1,YES);
+    DiagnosticPut32(data,76,5,YES);DiagnosticPut32(data,80,20,YES);DiagnosticPut32(data,84,0xfade7171,YES);DiagnosticPut32(data,88,(uint32_t)(8+xml.length),YES);
+    [data replaceBytesInRange:NSMakeRange(92,xml.length) withBytes:xml.bytes];return data;
+}
+static void TestLoginDiagnostics(void) {
+    FCheck(DARInstallLoginDiagnostics() && DARInstallLoginDiagnostics(),@"login diagnostic hooks match observed ABI and install idempotently");
+    NSDictionary *values=@{@"application-identifier":@"TEST.example.app",@"com.apple.developer.devicecheck.appattest-environment":@"production"};
+    FCheck([DARDiagnosticEntitlements(DiagnosticExecutable(values)) isEqual:values],@"diagnostic reader extracts signed XML entitlement fields");
+    FCheck(!DARDiagnosticEntitlements([NSData data]) && !DARDiagnosticEntitlements([@"invalid" dataUsingEncoding:NSUTF8StringEncoding]),@"missing and invalid diagnostic executable bytes fail safely");
+    NSMutableData *malformed=[DiagnosticExecutable(values) mutableCopy];DiagnosticPut32(malformed,40,0xfffffff0,NO);
+    FCheck(!DARDiagnosticEntitlements(malformed),@"diagnostic reader rejects out-of-range signature offsets");
+    malformed=[DiagnosticExecutable(values) mutableCopy];DiagnosticPut32(malformed,80,0xfffffff0,YES);
+    FCheck(!DARDiagnosticEntitlements(malformed),@"diagnostic reader rejects out-of-range entitlement blobs");
+    NSError *error=[NSError errorWithDomain:@"AccountSDK.Test" code:1049 userInfo:@{NSLocalizedDescriptionKey:@"SECRET-OTP-554433",@"token":@"SECRET-TOKEN-abcdef"}];
+    NSDictionary *parameters=@{@"phone":@"SECRET-PHONE-123"},*response=@{@"access_token":@"SECRET-ACCESS-token"};
+    IESAccountErrorHandler *handler=[IESAccountErrorHandler new];__block NSInteger callbacks=0;
+    [handler handleError:error extraParams:parameters response:response completion:^(NSString *result){FCheck([result isEqual:@"central-original"],@"central login diagnostic preserves original completion result");callbacks++;}];
+    FCheck(LoginCentralCalls==1 && LoginObservedError==error && LoginObservedParameters==parameters && LoginObservedResponse==response && callbacks==1,@"login diagnostics forward all original objects and callbacks exactly once");
+    [handler process1049Error:error fullData:response completion:^(NSString *result){FCheck([result isEqual:@"1049-original"],@"1049 diagnostic preserves original completion result");callbacks++;}];
+    [IESAccountIdentityVerificationDecisionDispatcher showForceUpdateDecision:response completion:^(NSString *result){FCheck([result isEqual:@"decision-original"],@"force-update diagnostic preserves original completion result");callbacks++;}];
+    FCheck(Login1049Calls==1 && LoginDecisionCalls==1 && LoginObservedDecision==response && callbacks==3,@"diagnostic routes do not skip error handling or force-update decisions");
+    NSString *report=DARLoginDiagnosticReport();
+    FCheck([report containsString:@"code=1049"] && [report containsString:@"进入身份验证强制更新路径"],@"login report distinguishes actual numeric errors from routing decisions");
+    FCheck(![report containsString:@"SECRET-"],@"login report never captures phone OTP error text or token payloads");
+    for(NSInteger i=0;i<20;i++)[handler handleError:[NSError errorWithDomain:@"Bounded.Test" code:9000+i userInfo:nil] extraParams:nil response:nil completion:nil];
+    report=DARLoginDiagnosticReport();
+    FCheck(![report containsString:@"code=9000"] && [report containsString:@"code=9019"],@"diagnostic event history retains only the latest sixteen entries");
+    NSString *before=DARLoginDiagnosticReport();[handler handleError:nil extraParams:nil response:nil completion:nil];
+    FCheck([before isEqual:DARLoginDiagnosticReport()],@"nil errors are forwarded without generating misleading failure events");
+}
+static void TestLoginDiagnosticsButton(void) {
+    UIWindow *window=DARTopController().view.window;UIButton *found;
+    for(UIView *view in window.subviews)if([view.accessibilityIdentifier isEqual:@"DAR.login.diagnostics"]){found=(UIButton *)view;break;}
+    [window layoutIfNeeded];
+    FCheck(found!=nil && [found.titleLabel.text isEqual:@"登录诊断"] && CGRectContainsRect(window.bounds,found.frame),@"login failure exposes an accessible diagnostic button within the visible window");
+}
 @interface AWESettingItemModel : NSObject
 @property(copy)NSString *identifier,*title,*subTitle,*svgIconImageName;
 @property NSInteger cellType;
@@ -290,9 +360,9 @@ static void TestSettingsIPMenus(void) {
     FCheck([entry.title isEqual:@"抖音增强"] && entry.cellTappedBlock!=nil,@"settings entry has a working tap action");
     FCheck(DARAugmentSettingsSections(sections,settings).count==1,@"settings entry is not duplicated");
     UITableViewController *plugin=[[NSClassFromString(@"DARSettingsController") alloc] init];[plugin loadViewIfNeeded];
-    FCheck([plugin numberOfSectionsInTableView:plugin.tableView]==4,@"plugin settings groups cover messages IP audio and photos");
-    NSArray *rowCounts=@[@2,@1,@4,@2];
-    for(NSUInteger section=0;section<4;section++)FCheck([plugin tableView:plugin.tableView numberOfRowsInSection:section]==[rowCounts[section] integerValue],@"settings includes all individual switches and audio-library entry");
+    FCheck([plugin numberOfSectionsInTableView:plugin.tableView]==5,@"plugin settings groups cover features and login diagnostics");
+    NSArray *rowCounts=@[@2,@1,@4,@2,@1];
+    for(NSUInteger section=0;section<5;section++)FCheck([plugin tableView:plugin.tableView numberOfRowsInSection:section]==[rowCounts[section] integerValue],@"settings includes all individual switches and audio-library entry");
     UITableViewCell *option=[plugin tableView:plugin.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:1]];
     UISwitch *toggle=(UISwitch *)option.accessoryView;toggle.on=YES;[toggle sendActionsForControlEvents:UIControlEventValueChanged];
     FCheck(DAROptionEnabled(DAROptionIP),@"settings switch persists option state");
@@ -421,6 +491,7 @@ static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completi
 void DARRunFeatureTests(void(^completion)(void)) {
     FCheck(DAROptionEnabled(DAROptionManualAudioDuration),@"manual comment duration is enabled by default");
     TestSettingsIPMenus();
+    TestLoginDiagnostics();
     DARSetOption(DAROptionManualAudioDuration,NO);
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.MP3"],nil) isEqual:@"mp3"],@"missing Content-Type falls back to the source audio extension");
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/audio?token=123"],@"audio/mpeg") isEqual:@"mp3"],@"downloaded MP3 retains its format even when the URL has no extension");
@@ -483,7 +554,7 @@ void DARRunFeatureTests(void(^completion)(void)) {
                     FCheck(cancelledError && !library.armed,@"disabling during transcoding cannot rearm audio later");
                     [library removeFile:imported error:NULL];[NSFileManager.defaultManager removeItemAtURL:temporary error:NULL];
                     for(NSString *key in @[DAROptionIP,DAROptionAudioLibrary,DAROptionCommentAudio,DAROptionImages])DARSetOption(key,NO);
-                    TestManualAudioDuration(^{TestImageSavePipeline(completion);});
+                    TestManualAudioDuration(^{TestImageSavePipeline(^{TestLoginDiagnosticsButton();completion();});});
                 }];
                 DARSetOption(DAROptionCommentAudio,NO);
             }];

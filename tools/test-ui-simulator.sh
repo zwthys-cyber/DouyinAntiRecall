@@ -8,7 +8,7 @@ SDK_PATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -target "$(uname -m)-apple-ios17.0-simulator" \
   -isysroot "$SDK_PATH" -fobjc-arc -fblocks -DDAR_TESTING=1 -Isrc \
   -Wall -Wextra -Werror -framework Foundation -framework UIKit -framework CoreGraphics -framework AVFoundation -framework CoreMedia -framework ImageIO -framework Photos -framework UniformTypeIdentifiers \
-  src/DouyinAntiRecall.m src/DARCache.m src/DARBadge.m src/DAROptions.m src/DARRuntime.m src/DARSettings.m src/DARIP.m src/DARAudio.m src/DARMedia.m src/DARPhotoDate.m tests/FeatureUITests.m tests/BadgeUITests.m \
+  src/DouyinAntiRecall.m src/DARCache.m src/DARBadge.m src/DAROptions.m src/DARRuntime.m src/DARSettings.m src/DARLoginDiagnostics.m src/DARIP.m src/DARAudio.m src/DARMedia.m src/DARPhotoDate.m tests/FeatureUITests.m tests/BadgeUITests.m \
   -o "$APP_PATH/DARBadgeTests"
 /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string local.douyin.badge-tests' "$APP_PATH/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string DARBadgeTests' "$APP_PATH/Info.plist"
