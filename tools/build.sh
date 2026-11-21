@@ -5,7 +5,7 @@ mkdir -p build
 SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
 xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK_PATH" \
   -miphoneos-version-min=15.0 -fobjc-arc -fblocks -O2 \
-  -Wall -Wextra -Werror -dynamiclib -framework Foundation -framework UIKit -framework CoreGraphics -framework AVFoundation -framework CoreMedia -framework Photos -framework UniformTypeIdentifiers \
+  -Wall -Wextra -Werror -dynamiclib -framework Foundation -framework UIKit -framework CoreGraphics -framework AVFoundation -framework CoreMedia -framework ImageIO -framework Photos -framework UniformTypeIdentifiers \
   -install_name @rpath/DouyinAntiRecall.dylib \
   -Wl,-dead_strip -Wl,-headerpad_max_install_names \
   src/DouyinAntiRecall.m src/DARCache.m src/DARBadge.m src/DAROptions.m src/DARRuntime.m src/DARSettings.m src/DARIP.m src/DARAudio.m src/DARMedia.m -o build/DouyinAntiRecall.dylib

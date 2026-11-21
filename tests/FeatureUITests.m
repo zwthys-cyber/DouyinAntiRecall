@@ -3,6 +3,8 @@
 #import "DARAudio.h"
 #import "DARRuntime.h"
 #import <CoreMedia/CoreMedia.h>
+#import <ImageIO/ImageIO.h>
+#import <Photos/Photos.h>
 #import <objc/message.h>
 #include <math.h>
 extern void DARFeatureAssert(BOOL,NSString *);
@@ -111,6 +113,71 @@ static void RegisterModernUploader(void) {
     });
     class_addMethod(cls,NSSelectorFromString(@"audioUploader:"),method,"@24@0:8@16");objc_registerClassPair(cls);
 }
+@interface FeaturePhotoRequest : NSObject
+@property(nonatomic,strong) NSDate *creationDate;
+@property(nonatomic,strong) NSData *resource;
+@property(nonatomic) NSUInteger dateWrites;
+@property(nonatomic) PHAssetResourceType resourceType;
+- (void)addResourceWithType:(PHAssetResourceType)type data:(NSData *)data options:(PHAssetResourceCreationOptions *)options;
+@end
+@implementation FeaturePhotoRequest
+- (void)setCreationDate:(NSDate *)date { _creationDate=date;_dateWrites++; }
+- (void)addResourceWithType:(PHAssetResourceType)type data:(NSData *)data options:(__unused PHAssetResourceCreationOptions *)options {self.resourceType=type;self.resource=data;}
+@end
+static NSData *PhotoDateFixture(NSData *pixels,NSDictionary *exif,NSDictionary *tiff) {
+    CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)pixels,NULL);
+    NSMutableData *data=[NSMutableData new];
+    CGImageDestinationRef destination=CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data,CFSTR("public.jpeg"),1,NULL);
+    NSMutableDictionary *properties=[NSMutableDictionary new];
+    if(exif)properties[(__bridge NSString *)kCGImagePropertyExifDictionary]=exif;
+    if(tiff)properties[(__bridge NSString *)kCGImagePropertyTIFFDictionary]=tiff;
+    CGImageDestinationAddImageFromSource(destination,source,0,(__bridge CFDictionaryRef)properties);
+    BOOL saved=CGImageDestinationFinalize(destination);CFRelease(source);CFRelease(destination);
+    FCheck(saved,@"capture-date fixture embeds real image metadata");return data;
+}
+static NSDate *UTCDate(NSInteger year,NSInteger month,NSInteger day,NSInteger hour,NSInteger minute,NSInteger second) {
+    NSCalendar *calendar=[[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    calendar.timeZone=[NSTimeZone timeZoneForSecondsFromGMT:0];
+    NSDateComponents *parts=[NSDateComponents new];parts.year=year;parts.month=month;parts.day=day;
+    parts.hour=hour;parts.minute=minute;parts.second=second;return [calendar dateFromComponents:parts];
+}
+static void TestPhotoCaptureDates(NSData *pixels) {
+    NSString *dateKey=(__bridge NSString *)kCGImagePropertyExifDateTimeOriginal;
+    NSString *offsetKey=(__bridge NSString *)kCGImagePropertyExifOffsetTimeOriginal;
+    NSString *subKey=(__bridge NSString *)kCGImagePropertyExifSubsecTimeOriginal;
+    NSData *original=PhotoDateFixture(pixels,@{dateKey:@"2020:02:29 12:34:56",offsetKey:@"+08:00",subKey:@"1234"},nil);
+    NSDate *expected=[UTCDate(2020,2,29,4,34,56) dateByAddingTimeInterval:0.1234];
+    NSDate *capture=DARPhotoCaptureDate(original);
+    FCheck(capture && fabs([capture timeIntervalSinceDate:expected])<0.001,@"EXIF original capture date honors offset subsecond and leap day");
+    NSData *converted=DARPhotoCompatibleJPEG(original);
+    NSDate *convertedDate=DARPhotoCaptureDate(converted);
+    FCheck(convertedDate && fabs([convertedDate timeIntervalSinceDate:expected])<0.001,@"JPEG compatibility conversion retains original capture date and timezone");
+    FeaturePhotoRequest *request=[FeaturePhotoRequest new];
+    DARConfigurePhotoRequest((PHAssetCreationRequest *)request,original,capture);
+    FCheck([request.creationDate isEqual:capture] && request.dateWrites==1 && request.resource==original && request.resourceType==PHAssetResourceTypePhoto,@"original Photos request sets capture date and keeps original bytes");
+    FeaturePhotoRequest *retry=[FeaturePhotoRequest new];
+    DARConfigurePhotoRequest((PHAssetCreationRequest *)retry,converted,capture);
+    FCheck([retry.creationDate isEqual:capture] && retry.resource==converted,@"JPEG retry uses the same capture date for the Photos asset");
+    NSData *negative=PhotoDateFixture(pixels,@{dateKey:@"2024:01:01 00:15:00",offsetKey:@"-05:30"},nil);
+    FCheck([DARPhotoCaptureDate(negative) isEqual:UTCDate(2024,1,1,5,45,0)],@"negative half-hour timezone offsets are interpreted correctly");
+    NSTimeZone *previous=NSTimeZone.defaultTimeZone;
+    NSTimeZone.defaultTimeZone=[NSTimeZone timeZoneForSecondsFromGMT:8*3600];
+    NSData *local=PhotoDateFixture(pixels,@{dateKey:@"2024:06:01 12:00:00"},nil);
+    NSDate *localDate=DARPhotoCaptureDate(local);NSTimeZone.defaultTimeZone=previous;
+    FCheck([localDate isEqual:UTCDate(2024,6,1,4,0,0)],@"EXIF without timezone follows the device local timezone");
+    for(NSDictionary *invalid in @[@{dateKey:@"0000:00:00 00:00:00"},@{dateKey:@"2023:02:29 12:00:00"},
+                                  @{dateKey:@"2024:01:01 25:00:00"},@{dateKey:@"invalid"},
+                                  @{dateKey:@"2024:01:01 00:00:00",offsetKey:@"+15:00"},
+                                  @{dateKey:@"2024:01:01 00:00:00",offsetKey:@"+08:90"}]) {
+        FCheck(!DARPhotoCaptureDate(PhotoDateFixture(pixels,invalid,nil)),@"invalid or empty capture timestamps are not used as photo dates");
+    }
+    NSData *edited=PhotoDateFixture(pixels,@{(__bridge NSString *)kCGImagePropertyExifDateTimeDigitized:@"2024:01:01 12:00:00"},
+                                   @{(__bridge NSString *)kCGImagePropertyTIFFDateTime:@"2025:01:01 12:00:00"});
+    FCheck(!DARPhotoCaptureDate(edited) && !DARPhotoCaptureDate(pixels) && !DARPhotoCaptureDate([NSData data]),@"edit digitization and missing dates never substitute for capture time");
+    FeaturePhotoRequest *undated=[FeaturePhotoRequest new];
+    DARConfigurePhotoRequest((PHAssetCreationRequest *)undated,pixels,nil);
+    FCheck(!undated.dateWrites && undated.resource==pixels,@"undated image saves normally without overriding the system date");
+}
 static void TestSettingsIPMenus(void) {
     for(NSString *key in @[DAROptionIP,DAROptionAudioLibrary,DAROptionCommentAudio,DAROptionImages])DARSetOption(key,NO);
     RegisterModernUploader();
@@ -150,6 +217,7 @@ static void TestSettingsIPMenus(void) {
     UIImage *small=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(12,7) format:format] imageWithActions:^(UIGraphicsImageRendererContext *context){
         CGContextSetFillColorWithColor(context.CGContext,UIColor.blueColor.CGColor);CGContextFillRect(context.CGContext,CGRectMake(0,0,12,7));
     }];
+    TestPhotoCaptureDates(UIImagePNGRepresentation(small));
     NSData *jpeg=DARPhotoCompatibleJPEG(UIImagePNGRepresentation(small));UIImage *compatible=[UIImage imageWithData:jpeg];
     FCheck(jpeg.length && CGImageGetWidth(compatible.CGImage)==12 && CGImageGetHeight(compatible.CGImage)==7,@"photo format fallback retains full pixel dimensions");
     FCheck(!DARPhotoCompatibleJPEG([@"invalid" dataUsingEncoding:NSUTF8StringEncoding]),@"invalid image data never produces a fake saved photo");

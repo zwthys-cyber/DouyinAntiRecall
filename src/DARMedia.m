@@ -3,6 +3,7 @@
 #import "DAROptions.h"
 #import "DARRuntime.h"
 #import <Photos/Photos.h>
+#import <ImageIO/ImageIO.h>
 #import <objc/message.h>
 static NSURL *DARHTTPURL(id value) {
     NSURL *url=[value isKindOfClass:NSURL.class]?value:([value isKindOfClass:NSString.class]?[NSURL URLWithString:value]:nil);
@@ -22,37 +23,103 @@ NSURL *DAROriginalImageURL(id imageModel) {
     NSURL *url=DARFirstURL(DARGet(imageModel,@"watermarkFreeUrlList"));
     return url?:DARFirstURL(DARGet(imageModel,@"urlList"));
 }
+static NSDictionary *DARPhotoExif(NSData *data) {
+    if(!data.length)return nil;
+    CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)data,NULL);
+    if(!source)return nil;
+    NSDictionary *properties=CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source,0,NULL));
+    CFRelease(source);
+    id exif=properties[(__bridge NSString *)kCGImagePropertyExifDictionary];
+    return [exif isKindOfClass:NSDictionary.class]?exif:nil;
+}
+static BOOL DARDateMatches(NSString *value,NSString *pattern) {
+    if(![value isKindOfClass:NSString.class])return NO;
+    NSRange match=[value rangeOfString:pattern options:NSRegularExpressionSearch];
+    return match.location==0 && match.length==value.length;
+}
+NSDate *DARPhotoCaptureDate(NSData *data) {
+    NSDictionary *exif=DARPhotoExif(data);
+    NSString *original=exif[(__bridge NSString *)kCGImagePropertyExifDateTimeOriginal];
+    if(!DARDateMatches(original,@"^[0-9]{4}:[0-9]{2}:[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$") || [original hasPrefix:@"0000"])return nil;
+    // EXIF without an offset records local wall-clock time. Do not guess a
+    // location or substitute publication, edit or download timestamps.
+    NSTimeZone *zone=NSTimeZone.localTimeZone;
+    NSString *offset=exif[(__bridge NSString *)kCGImagePropertyExifOffsetTimeOriginal];
+    if(offset) {
+        if(!DARDateMatches(offset,@"^[+-][0-9]{2}:[0-9]{2}$"))return nil;
+        NSInteger hours=[[offset substringWithRange:NSMakeRange(1,2)] integerValue];
+        NSInteger minutes=[[offset substringFromIndex:4] integerValue];
+        if(hours>14 || minutes>59 || (hours==14 && minutes))return nil;
+        NSInteger seconds=(hours*60+minutes)*60*([offset hasPrefix:@"-"]?-1:1);
+        zone=[NSTimeZone timeZoneForSecondsFromGMT:seconds];
+    }
+    NSDateFormatter *formatter=[NSDateFormatter new];
+    formatter.locale=[[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+    formatter.calendar=[[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    formatter.timeZone=zone;formatter.dateFormat=@"yyyy:MM:dd HH:mm:ss";formatter.lenient=NO;
+    NSDate *date=[formatter dateFromString:original];
+    if(!date || ![[formatter stringFromDate:date] isEqual:original])return nil;
+    NSString *subsecond=exif[(__bridge NSString *)kCGImagePropertyExifSubsecTimeOriginal];
+    if(DARDateMatches(subsecond,@"^[0-9]{1,9}$"))date=[date dateByAddingTimeInterval:[[@"0." stringByAppendingString:subsecond] doubleValue]];
+    return date;
+}
 NSData *DARPhotoCompatibleJPEG(NSData *data) {
     UIImage *image=[UIImage imageWithData:data];
-    return image?UIImageJPEGRepresentation(image,0.98):nil;
+    NSData *jpeg=image?UIImageJPEGRepresentation(image,0.98):nil;
+    if(!jpeg || !DARPhotoCaptureDate(data))return jpeg;
+    NSDictionary *exif=DARPhotoExif(data);
+    NSMutableDictionary *dates=[NSMutableDictionary new];
+    for(NSString *key in @[(__bridge NSString *)kCGImagePropertyExifDateTimeOriginal,
+                          (__bridge NSString *)kCGImagePropertyExifOffsetTimeOriginal,
+                          (__bridge NSString *)kCGImagePropertyExifSubsecTimeOriginal]) {
+        if([exif[key] isKindOfClass:NSString.class])dates[key]=exif[key];
+    }
+    // Reattach capture date fields after UIKit's format conversion. Use the
+    // converted JPEG as the source so its pixel orientation stays intact.
+    CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)jpeg,NULL);
+    NSMutableData *result=[NSMutableData new];
+    CGImageDestinationRef destination=CGImageDestinationCreateWithData((__bridge CFMutableDataRef)result,CFSTR("public.jpeg"),1,NULL);
+    BOOL saved=NO;
+    if(source && destination) {
+        NSDictionary *properties=@{(__bridge NSString *)kCGImagePropertyExifDictionary:dates};
+        CGImageDestinationAddImageFromSource(destination,source,0,(__bridge CFDictionaryRef)properties);
+        saved=CGImageDestinationFinalize(destination);
+    }
+    if(source)CFRelease(source);if(destination)CFRelease(destination);
+    return saved?result:jpeg;
+}
+void DARConfigurePhotoRequest(PHAssetCreationRequest *creation,NSData *data,NSDate *captureDate) {
+    if(captureDate)creation.creationDate=captureDate;
+    [creation addResourceWithType:PHAssetResourceTypePhoto data:data options:nil];
 }
 @interface DARImageSaveTask : NSObject
 @property(nonatomic,strong) NSArray<NSURL *> *urls;
 @property(nonatomic) NSUInteger index;
 @property(nonatomic) NSUInteger successes;
+@property(nonatomic) NSUInteger dated;
 - (void)next;
 @end
 @implementation DARImageSaveTask
 - (void)next {
-    if(self.index>=self.urls.count){DARToast([NSString stringWithFormat:@"已保存 %lu/%lu 张图片",(unsigned long)self.successes,(unsigned long)self.urls.count]);return;}
+    if(self.index>=self.urls.count){DARToast([NSString stringWithFormat:@"已保存 %lu/%lu 张，%lu 张按拍摄时间归档",(unsigned long)self.successes,(unsigned long)self.urls.count,(unsigned long)self.dated]);return;}
     NSURL *url=self.urls[self.index++]; NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url];request.timeoutInterval=45;
     [[NSURLSession.sharedSession downloadTaskWithRequest:request completionHandler:^(NSURL *file,NSURLResponse *response,NSError *error){
         NSNumber *size;[file getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
         NSData *data=(!error && [(NSHTTPURLResponse *)response statusCode]==200 && size.unsignedLongLongValue<=50*1024*1024)?[NSData dataWithContentsOfURL:file]:nil;
         if(!data.length || ![UIImage imageWithData:data]){dispatch_async(dispatch_get_main_queue(),^{[self next];});return;}
+        NSDate *captureDate=DARPhotoCaptureDate(data);
         [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-            PHAssetCreationRequest *creation=[PHAssetCreationRequest creationRequestForAsset];
-            [creation addResourceWithType:PHAssetResourceTypePhoto data:data options:nil];
+            DARConfigurePhotoRequest([PHAssetCreationRequest creationRequestForAsset],data,captureDate);
         } completionHandler:^(BOOL success,__unused NSError *saveError){
-            if(success){dispatch_async(dispatch_get_main_queue(),^{self.successes++;[self next];});return;}
+            if(success){dispatch_async(dispatch_get_main_queue(),^{self.successes++;if(captureDate)self.dated++;[self next];});return;}
             // Some CDN formats render in UIKit but are not accepted by Photos.
             // Keep the original bytes when possible; retry at full resolution as JPEG.
             NSData *jpeg=DARPhotoCompatibleJPEG(data);
             if(!jpeg){dispatch_async(dispatch_get_main_queue(),^{[self next];});return;}
             [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-                [[PHAssetCreationRequest creationRequestForAsset] addResourceWithType:PHAssetResourceTypePhoto data:jpeg options:nil];
+                DARConfigurePhotoRequest([PHAssetCreationRequest creationRequestForAsset],jpeg,captureDate);
             } completionHandler:^(BOOL retried,__unused NSError *retryError){
-                dispatch_async(dispatch_get_main_queue(),^{if(retried)self.successes++;[self next];});
+                dispatch_async(dispatch_get_main_queue(),^{if(retried){self.successes++;if(captureDate)self.dated++;}[self next];});
             }];
         }];
     }] resume];

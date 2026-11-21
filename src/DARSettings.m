@@ -187,7 +187,7 @@ void DAROpenAudioLibrary(UIViewController *presenter) {
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self.rows[section] count]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForHeaderInSection:(NSInteger)section { return @[@"消息",@"视频信息",@"音频",@"图片"][section]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次，最长取前 29.5 秒。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，需允许添加到相册。\nv0.2.1 · 适配抖音 41.2.0（412021）"][section];
+    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次，最长取前 29.5 秒。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，有 EXIF 拍摄日期时按该日期存入相册；缺失时使用系统默认时间。需允许添加到相册。\nv0.2.2 · 适配抖音 41.2.0（412021）"][section];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"option"];
