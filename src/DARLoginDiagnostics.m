@@ -8,17 +8,6 @@
 
 static IMP DAROriginalLoginError,DAROriginal1049,DAROriginalForceUpdate,DAROriginalUpgradePanel;
 static BOOL DARLoginObservationAllowed=YES;
-static BOOL DARLoginEntryHidden;
-@interface DARLoginOverlayWindow : UIWindow
-@end
-@implementation DARLoginOverlayWindow
-- (BOOL)canBecomeKeyWindow { return NO; }
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hit=[super hitTest:point withEvent:event];
-    return hit==self || hit==self.rootViewController.view?nil:hit;
-}
-@end
-static DARLoginOverlayWindow *DARLoginOverlay;
 static BOOL DARRead32(NSData *data,NSUInteger offset,BOOL big,uint32_t *value) {
     if(offset>data.length || data.length-offset<4)return NO;
     uint32_t raw;memcpy(&raw,(const uint8_t *)data.bytes+offset,4);
@@ -71,39 +60,9 @@ void DAROpenLoginDiagnostics(UIViewController *presenter) {
     NSString *report=DARLoginDiagnosticReport();
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"登录诊断" message:report preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"复制诊断" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){UIPasteboard.generalPasteboard.string=report;DARToast(@"已复制登录诊断");}]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"收起入口" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){DARLoginEntryHidden=YES;DARLoginOverlay.hidden=YES;}]];
     [alert addAction:[UIAlertAction actionWithTitle:@"消息通知修复" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){DAROpenNotificationRepair(nil);}]];
     [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
     [presenter presentViewController:alert animated:YES completion:nil];
-}
-static void DARRefreshLoginEntry(void) {
-    if(DARLoginEntryHidden || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
-    UIWindow *base=DARTopController().view.window;
-    if(!base || [base isKindOfClass:DARLoginOverlayWindow.class])return;
-    DARLoginOverlayWindow *window=DARLoginOverlay;
-    if(!window || window.windowScene!=base.windowScene) {
-        window.hidden=YES;
-        window=base.windowScene?[[DARLoginOverlayWindow alloc] initWithWindowScene:base.windowScene]:[[DARLoginOverlayWindow alloc] initWithFrame:base.bounds];
-        window.frame=base.windowScene?base.windowScene.coordinateSpace.bounds:base.frame;
-        window.accessibilityIdentifier=@"DAR.login.overlay";
-        window.windowLevel=UIWindowLevelAlert+1;
-        UIViewController *root=[UIViewController new];root.view.backgroundColor=UIColor.clearColor;window.rootViewController=root;
-        UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];
-        [button setTitle:@"诊断 v0.2.9" forState:UIControlStateNormal];button.titleLabel.font=[UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-        [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];button.backgroundColor=UIColor.systemBlueColor;
-        button.layer.cornerRadius=18;button.accessibilityIdentifier=@"DAR.login.diagnostics";button.accessibilityLabel=@"登录诊断 v0.2.9";button.translatesAutoresizingMaskIntoConstraints=NO;
-        [button addAction:[UIAction actionWithHandler:^(__unused UIAction *action){DAROpenLoginDiagnostics(nil);}] forControlEvents:UIControlEventTouchUpInside];
-        [root.view addSubview:button];
-        [NSLayoutConstraint activateConstraints:@[[button.trailingAnchor constraintEqualToAnchor:root.view.safeAreaLayoutGuide.trailingAnchor constant:-12],
-            [button.bottomAnchor constraintEqualToAnchor:root.view.safeAreaLayoutGuide.bottomAnchor constant:-12],
-            [button.widthAnchor constraintEqualToConstant:112],[button.heightAnchor constraintEqualToConstant:36]]];
-        DARLoginOverlay=window;
-    }
-    // Showing this non-key window must not steal the login keyboard or focus.
-    window.hidden=NO;
-}
-static void DARShowLoginButton(void) {
-    dispatch_async(dispatch_get_main_queue(),^{DARRefreshLoginEntry();});
 }
 void DARStartLoginDiagnostics(BOOL allowObservation) {
     dispatch_async(dispatch_get_main_queue(),^{
@@ -112,18 +71,14 @@ void DARStartLoginDiagnostics(BOOL allowObservation) {
         dispatch_once(&once,^{
             NSNotificationCenter *center=NSNotificationCenter.defaultCenter;
             for(NSNotificationName name in @[UIApplicationDidBecomeActiveNotification,UIWindowDidBecomeVisibleNotification,UIWindowDidBecomeKeyNotification,UISceneDidActivateNotification]) {
-                [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){
-                    if([note.object isKindOfClass:DARLoginOverlayWindow.class])return;
+                [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note){
                     if(DARLoginObservationAllowed)(void)DARInstallLoginDiagnostics();
-                    DARRefreshLoginEntry();
                 }];
             }
         });
         if(DARLoginObservationAllowed)(void)DARInstallLoginDiagnostics();
-        DARShowLoginButton();
         for(NSNumber *delay in @[@1,@3,@8])dispatch_after(dispatch_time(DISPATCH_TIME_NOW,delay.longLongValue*NSEC_PER_SEC),dispatch_get_main_queue(),^{
             if(DARLoginObservationAllowed)(void)DARInstallLoginDiagnostics();
-            DARRefreshLoginEntry();
         });
     });
 }
@@ -135,7 +90,6 @@ static void DARRecordLoginError(NSString *route,id error) {
     NSMutableArray *events=DARLoginEvents();@synchronized(events) {
         [events addObject:event];while(events.count>16)[events removeObjectAtIndex:0];
     }
-    dispatch_async(dispatch_get_main_queue(),^{DARLoginEntryHidden=NO;DARRefreshLoginEntry();});
 }
 NSString *DARLoginDiagnosticReport(void) {
     NSBundle *bundle=NSBundle.mainBundle;
@@ -147,7 +101,7 @@ NSString *DARLoginDiagnosticReport(void) {
     NSMutableArray *events=DARLoginEvents();NSString *recent;
     @synchronized(events){recent=events.count?[events componentsJoinedByString:@"\n"]:@"尚未捕获登录错误";}
     NSUInteger installed=(DAROriginalLoginError!=NULL)+(DAROriginal1049!=NULL)+(DAROriginalForceUpdate!=NULL)+(DAROriginalUpgradePanel!=NULL);
-    return [NSString stringWithFormat:@"v0.2.9 已加载\n宿主允许观察：%@\n观察点：%lu/4\niOS %@\n抖音 %@ (%@)\nBundle %@\nTeam %@\nApp ID %@\nApp Attest %@\n签名字段：%@\n\n%@\n\n仅记录错误域、错误码和处理路径，重启清空。不读取错误正文、手机号、验证码或令牌。",
+    return [NSString stringWithFormat:@"v0.2.10 已加载\n宿主允许观察：%@\n观察点：%lu/4\niOS %@\n抖音 %@ (%@)\nBundle %@\nTeam %@\nApp ID %@\nApp Attest %@\n签名字段：%@\n\n%@\n\n仅记录错误域、错误码和处理路径，重启清空。不读取错误正文、手机号、验证码或令牌。",
         DARLoginObservationAllowed?@"是":@"否（版本不匹配，仅显示诊断）",(unsigned long)installed,
         UIDevice.currentDevice.systemVersion,[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"未知",
         [bundle objectForInfoDictionaryKey:@"CFBundleVersion"]?:@"未知",bundle.bundleIdentifier?:@"未知",

@@ -102,15 +102,6 @@ static UIButton *FindLoginDiagnosticsButton(void) {
         for(UIView *view in window.rootViewController.view.subviews)if([view.accessibilityIdentifier isEqual:@"DAR.login.diagnostics"])return (UIButton *)view;
     return nil;
 }
-static void TestLoginDiagnosticsButton(void) {
-    UIButton *found=FindLoginDiagnosticsButton();UIWindow *overlay=found.window;
-    [overlay layoutIfNeeded];
-    FCheck(found!=nil && [found.titleLabel.text containsString:@"v0.2.9"] && CGRectContainsRect(overlay.bounds,[found convertRect:found.bounds toView:overlay]),@"diagnostic overlay displays its version within visible window bounds");
-    FCheck(overlay.windowLevel>UIWindowLevelAlert && !overlay.isKeyWindow && !overlay.canBecomeKeyWindow,@"diagnostic overlay stays above login dialogs without stealing keyboard focus");
-    FCheck([overlay hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"diagnostic overlay passes through touches outside its button");
-    CGPoint center=[found convertPoint:CGPointMake(CGRectGetMidX(found.bounds),CGRectGetMidY(found.bounds)) toView:overlay];
-    FCheck([overlay hitTest:center withEvent:nil]==found,@"diagnostic overlay button remains tappable");
-}
 @interface AWESettingItemModel : NSObject
 @property(copy)NSString *identifier,*title,*subTitle,*svgIconImageName;
 @property NSInteger cellType;
@@ -391,6 +382,8 @@ static void TestSettingsIPMenus(void) {
     FCheck([plugin numberOfSectionsInTableView:plugin.tableView]==5,@"plugin settings groups cover features and login diagnostics");
     NSArray *rowCounts=@[@2,@1,@4,@2,@2];
     for(NSUInteger section=0;section<5;section++)FCheck([plugin tableView:plugin.tableView numberOfRowsInSection:section]==[rowCounts[section] integerValue],@"settings includes all individual switches and audio-library entry");
+    UITableViewCell *diagnostics=[plugin tableView:plugin.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:4]];
+    FCheck([diagnostics.textLabel.text isEqual:@"查看登录诊断"] && diagnostics.accessoryType==UITableViewCellAccessoryDisclosureIndicator,@"login diagnostics remain accessible through plugin settings");
     UITableViewCell *notifications=[plugin tableView:plugin.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:4]];
     FCheck([notifications.textLabel.text isEqual:@"消息通知修复"] && notifications.accessoryView==nil && notifications.accessoryType==UITableViewCellAccessoryDisclosureIndicator,@"notification repair is an action entry, not a feature toggle");
     UITableViewCell *option=[plugin tableView:plugin.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:1]];
@@ -524,6 +517,7 @@ static void RunFeatureTestsWithEntry(void(^completion)(void)) {
     DARRunNotificationTests();
     TestSettingsIPMenus();
     TestLoginDiagnostics();
+    FCheck(FindLoginDiagnosticsButton()==nil,@"login errors do not create an overlay over host controls");
     DARSetOption(DAROptionManualAudioDuration,NO);
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.MP3"],nil) isEqual:@"mp3"],@"missing Content-Type falls back to the source audio extension");
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/audio?token=123"],@"audio/mpeg") isEqual:@"mp3"],@"downloaded MP3 retains its format even when the URL has no extension");
@@ -594,17 +588,13 @@ static void RunFeatureTestsWithEntry(void(^completion)(void)) {
         }];
     });
 }
-static void WaitForStartupDiagnosticEntry(NSUInteger remaining,void(^completion)(void)) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,50*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
-        if(FindLoginDiagnosticsButton()) {
-            FCheck([DARLoginDiagnosticReport() containsString:@"尚未捕获登录错误"],@"startup diagnostic entry exists before any login failure callback");
-            TestLoginDiagnosticsButton();RunFeatureTestsWithEntry(completion);return;
-        }
-        if(!remaining){FCheck(NO,@"startup diagnostic entry becomes visible after window activation");return;}
-        WaitForStartupDiagnosticEntry(remaining-1,completion);
-    });
-}
 void DARRunFeatureTests(void(^completion)(void)) {
-    DARStartLoginDiagnostics(YES);WaitForStartupDiagnosticEntry(200,completion);
+    DARStartLoginDiagnostics(YES);
+    dispatch_async(dispatch_get_main_queue(),^{
+        FCheck(FindLoginDiagnosticsButton()==nil,@"startup diagnostics do not create a floating button");
+        [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:UIApplication.sharedApplication];
+        FCheck(FindLoginDiagnosticsButton()==nil,@"foreground activation keeps diagnostics inside settings");
+        RunFeatureTestsWithEntry(completion);
+    });
 }
 #pragma clang diagnostic pop
