@@ -1,0 +1,32 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const directory = 'tools/wq-push-inspector/';
+const manifest = JSON.parse(fs.readFileSync(directory + 'manifest.json', 'utf8'));
+assert.equal(manifest.api, 1);
+assert.deepEqual(manifest.extensions, ['plist']);
+const source = fs.readFileSync(directory + 'inspect.js', 'utf8');
+function run(plist, truncated = false) {
+  const before = JSON.stringify(plist);
+  const context = vm.createContext({ input: { plist, truncated } });
+  vm.runInContext(source, context, { timeout: 1000 });
+  const result = vm.runInContext('inspect(input)', context, { timeout: 1000 });
+  assert.equal(JSON.stringify(plist), before, 'inspector must not mutate the selected plist');
+  const text = JSON.stringify(result);
+  assert(!text.includes('PRIVATE'), 'sensitive fixture data leaked');
+  assert(!text.includes('session_key'), 'unrelated keys leaked');
+  assert(!text.includes('access_token'), 'login credential keys leaked');
+  assert(!text.includes('phone_number'), 'phone key leaked');
+  return text;
+}
+const secrets = { session_key: 'PRIVATE-SESSION', access_token: 'PRIVATE-ACCESS', phone_number: 'PRIVATE-PHONE' };
+const normal = run({ ...secrets, BDUGPushDeviceToken: 'PRIVATE-PUSH', BDUGPushVersionCodeKey: '412021', BDUGPushUploadTokenTimestampKey: 1795250000 });
+assert(normal.includes('存在（内容隐藏）') && normal.includes('412021') && normal.includes('UTC'));
+const missing = run(secrets);
+assert(missing.includes('未找到') && missing.includes('不证明'));
+assert(run({ BDUGPushDeviceToken: '' }).includes('存在但为空'));
+assert(run({ BDUGPushDeviceToken: { secret: 'PRIVATE' }, BDUGPushVersionCodeKey: 'PRIVATE-VERSION', BDUGPushUploadTokenTimestampKey: 'PRIVATE-TIME' }).includes('类型异常'));
+for (const time of [0, -1, Infinity, NaN, 4102444801, {}, []]) assert(run({ BDUGPushUploadTokenTimestampKey: time }).includes('不是合理'));
+for (const value of [null, [], 'PRIVATE']) assert(run(value).includes('请选择'));
+assert(run({ ...secrets, BDUGPushDeviceToken: 'PRIVATE' }, true).includes('未解析'));
+console.log('PASS: WQ inspector redacts credentials, validates cache fields, rejects truncation and preserves input');
