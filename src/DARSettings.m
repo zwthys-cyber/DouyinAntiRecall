@@ -37,9 +37,14 @@ void DARToast(NSString *message) {
         });
     });
 }
-@interface DARLibraryController : UITableViewController <UIDocumentPickerDelegate>
+@interface DARLibraryController : UITableViewController <UIDocumentPickerDelegate, AVAudioPlayerDelegate>
 @property(nonatomic,strong) NSArray<NSURL *> *files;
 @property(nonatomic,strong) AVAudioPlayer *player;
+@property(nonatomic,strong) NSURL *playingFile;
+@property(nonatomic,strong) NSURL *preparingFile;
+@property(nonatomic) NSUInteger prepareGeneration;
+- (void)playFile:(NSURL *)file;
+- (void)prepareFileForComment:(NSURL *)file;
 @end
 @implementation DARLibraryController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
@@ -48,13 +53,16 @@ void DARToast(NSString *message) {
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(importAudio)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.toolbarItems=@[[[UIBarButtonItem alloc] initWithTitle:@"取消待发送音频" style:UIBarButtonItemStylePlain target:self action:@selector(cancelAudio)]];
-    [self.navigationController setToolbarHidden:NO]; [self reload];
+    [self.navigationController setToolbarHidden:NO]; self.tableView.rowHeight=64; [self reload];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self reload]; }
-- (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [self.player stop]; }
+- (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [self.player stop]; self.playingFile=nil; }
 - (void)reload { self.files=DARAudioLibrary.shared.files; [self.tableView reloadData]; }
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
-- (void)cancelAudio { [DARAudioLibrary.shared cancelPending]; DARToast(@"已取消待发送音频"); [self reload]; }
+- (void)cancelAudio {
+    self.prepareGeneration++; self.preparingFile=nil; self.navigationItem.prompt=nil;
+    [DARAudioLibrary.shared cancelPending]; DARToast(@"已取消待发送音频"); [self reload];
+}
 - (void)importAudio {
     UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeAudio] asCopy:YES];
     picker.delegate=self; picker.allowsMultipleSelection=YES; [self presentViewController:picker animated:YES completion:nil];
@@ -76,7 +84,7 @@ void DARToast(NSString *message) {
 }
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(__unused NSInteger)section { return self.files.count; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(__unused NSInteger)section {
-    return DARAudioLibrary.shared.armed?@"已准备下一条评论语音。返回评论区，录制约 1 秒后松开，发送已选音频。5 分钟内有效，仅使用一次。":@"点右上角导入音频，或长按视频选择“音频入库”。点文件可试听或准备为下一条评论语音，最长取前 29.5 秒。";
+    return DARAudioLibrary.shared.armed?@"已准备下一条评论语音。返回评论区，录制约 1 秒后松开，发送已选音频。5 分钟内有效，仅使用一次。":@"右侧按钮可试听或发送。发送会先准备音频，随后回评论区录约 1 秒松开完成发送，最长取前 29.5 秒。点文件可打开更多操作。";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"audio"];
@@ -84,27 +92,70 @@ void DARToast(NSString *message) {
     NSURL *file=self.files[indexPath.row]; NSNumber *size; [file getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
     cell.textLabel.text=file.lastPathComponent.stringByDeletingPathExtension;
     cell.detailTextLabel.text=[NSString stringWithFormat:@"%@ · %@",file.pathExtension.uppercaseString,[NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]];
-    cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator; return cell;
+    cell.textLabel.numberOfLines=1; cell.textLabel.lineBreakMode=NSLineBreakByTruncatingTail;
+    __weak typeof(self) weakSelf=self;
+    UIButton *play=[UIButton buttonWithType:UIButtonTypeSystem];
+    UIButtonConfiguration *playStyle=[UIButtonConfiguration plainButtonConfiguration];
+    BOOL playing=[self.playingFile isEqual:file] && self.player.isPlaying;
+    playStyle.image=[UIImage systemImageNamed:playing?@"pause.fill":@"play.fill"];
+    play.configuration=playStyle; play.accessibilityIdentifier=@"DAR.audio.play";
+    play.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",playing?@"停止试听":@"试听",file.lastPathComponent];
+    [play addAction:[UIAction actionWithHandler:^(__unused UIAction *action){[weakSelf playFile:file];}] forControlEvents:UIControlEventTouchUpInside];
+    UIButton *send=[UIButton buttonWithType:UIButtonTypeSystem];
+    UIButtonConfiguration *sendStyle=[UIButtonConfiguration borderedProminentButtonConfiguration];
+    sendStyle.title=@"发送"; sendStyle.buttonSize=UIButtonConfigurationSizeSmall;
+    sendStyle.cornerStyle=UIButtonConfigurationCornerStyleCapsule;
+    sendStyle.showsActivityIndicator=[self.preparingFile isEqual:file]; send.configuration=sendStyle;
+    send.enabled=self.preparingFile==nil; send.accessibilityIdentifier=@"DAR.audio.send";
+    send.accessibilityLabel=[NSString stringWithFormat:@"准备发送 %@",file.lastPathComponent];
+    [send addAction:[UIAction actionWithHandler:^(__unused UIAction *action){[weakSelf prepareFileForComment:file];}] forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *buttons=[[UIStackView alloc] initWithArrangedSubviews:@[play,send]];
+    buttons.axis=UILayoutConstraintAxisHorizontal; buttons.spacing=8; buttons.alignment=UIStackViewAlignmentCenter;
+    buttons.frame=CGRectMake(0,0,116,44);
+    [NSLayoutConstraint activateConstraints:@[[play.widthAnchor constraintEqualToConstant:44],
+        [play.heightAnchor constraintEqualToConstant:44],[send.widthAnchor constraintEqualToConstant:64],
+        [send.heightAnchor constraintEqualToConstant:44]]];
+    cell.accessoryType=UITableViewCellAccessoryNone;cell.accessoryView=buttons; return cell;
+}
+- (void)playFile:(NSURL *)file {
+    if([self.playingFile isEqual:file] && self.player.isPlaying) {
+        [self.player stop]; self.playingFile=nil;
+    } else {
+        [self.player stop]; NSError *error;
+        self.player=[[AVAudioPlayer alloc] initWithContentsOfURL:file error:&error]; self.player.delegate=self;
+        if(error || ![self.player play]) {self.playingFile=nil;DARToast(@"无法播放该音频");}
+        else self.playingFile=file;
+    }
+    [self.tableView reloadData];
+}
+- (void)audioPlayerDidFinishPlaying:(__unused AVAudioPlayer *)player successfully:(__unused BOOL)success {
+    self.playingFile=nil; [self.tableView reloadData];
+}
+- (void)prepareFileForComment:(NSURL *)file {
+    if(self.preparingFile){DARToast(@"音频正在准备，请稍候");return;}
+    [self.player stop]; self.playingFile=nil;
+    self.preparingFile=file; NSUInteger generation=++self.prepareGeneration;
+    self.navigationItem.prompt=@"正在准备音频…"; [self.tableView reloadData];
+    __weak typeof(self) weakSelf=self;
+    [DARAudioLibrary.shared prepareFile:file completion:^(NSError *error){
+        DARLibraryController *self=weakSelf;
+        if(!self || generation!=self.prepareGeneration)return;
+        self.preparingFile=nil; self.navigationItem.prompt=nil; [self reload];
+        if(error){DARToast(error.localizedDescription);return;}
+        if(!self.view.window || self.presentedViewController){DARToast(@"下一条评论音频已准备，回评论区录约 1 秒发送");return;}
+        UIAlertController *ready=[UIAlertController alertControllerWithTitle:@"音频已准备" message:@"返回评论区，录制约 1 秒后松开，即可发送这段音频。仅替换下一次评论语音，5 分钟内有效。" preferredStyle:UIAlertControllerStyleAlert];
+        [ready addAction:[UIAlertAction actionWithTitle:@"完成" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self close];}]];
+        [self presentViewController:ready animated:YES completion:nil];
+    }];
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES]; NSURL *file=self.files[indexPath.row];
     UIAlertController *actions=[UIAlertController alertControllerWithTitle:file.lastPathComponent.stringByDeletingPathExtension message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    [actions addAction:[UIAlertAction actionWithTitle:@"试听" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){
-        [self.player stop]; NSError *error; self.player=[[AVAudioPlayer alloc] initWithContentsOfURL:file error:&error];
-        if(error || ![self.player play])DARToast(@"无法播放该音频");
-    }]];
-    [actions addAction:[UIAlertAction actionWithTitle:@"用于下一条评论语音" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){
-        self.navigationItem.prompt=@"正在准备音频…";
-        [DARAudioLibrary.shared prepareFile:file completion:^(NSError *error){
-            self.navigationItem.prompt=nil; [self reload];
-            if(error){DARToast(error.localizedDescription);return;}
-            if(!self.view.window){DARToast(@"下一条评论音频已准备");return;}
-            UIAlertController *ready=[UIAlertController alertControllerWithTitle:@"音频已准备" message:@"返回评论区，录制约 1 秒后松开，即可发送这段音频。仅替换下一次评论语音，5 分钟内有效。" preferredStyle:UIAlertControllerStyleAlert];
-            [ready addAction:[UIAlertAction actionWithTitle:@"完成" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){[self close];}]];
-            [self presentViewController:ready animated:YES completion:nil];
-        }];
-    }]];
+    [actions addAction:[UIAlertAction actionWithTitle:@"试听" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self playFile:file];}]];
+    [actions addAction:[UIAlertAction actionWithTitle:@"用于下一条评论语音" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self prepareFileForComment:file];}]];
     [actions addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action){
+        if([self.playingFile isEqual:file]){[self.player stop];self.playingFile=nil;}
+        if([self.preparingFile isEqual:file]){self.prepareGeneration++;self.preparingFile=nil;self.navigationItem.prompt=nil;}
         NSError *error; [DARAudioLibrary.shared removeFile:file error:&error]; if(error)DARToast(error.localizedDescription); [self reload];
     }]];
     [actions addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
@@ -136,7 +187,7 @@ void DAROpenAudioLibrary(UIViewController *presenter) {
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self.rows[section] count]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForHeaderInSection:(NSInteger)section { return @[@"消息",@"视频信息",@"音频",@"图片"][section]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次，最长取前 29.5 秒。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，需允许添加到相册。\nv0.2.0 · 适配抖音 41.2.0（412021）"][section];
+    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次，最长取前 29.5 秒。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，需允许添加到相册。\nv0.2.1 · 适配抖音 41.2.0（412021）"][section];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"option"];

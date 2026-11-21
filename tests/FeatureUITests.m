@@ -177,6 +177,48 @@ static NSURL *AudioFixture(NSURL *directory) {
     BOOL wrote=[file writeFromBuffer:buffer error:&error];
     FCheck(file && wrote && !error,@"audio fixture encodes without microphone or network access");return url;
 }
+static void WaitForAudioRow(UITableViewController *controller, NSUInteger remaining, void(^completion)(NSError *)) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,50*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+        if(DARAudioLibrary.shared.armed && !DARGet(controller,@"preparingFile")) {
+            FCheck(controller.navigationItem.prompt==nil,@"row preparation clears its busy prompt");
+            completion(nil);return;
+        }
+        FCheck(remaining>0,@"inline Send prepares audio within the simulator deadline");
+        WaitForAudioRow(controller,remaining-1,completion);
+    });
+}
+static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completion)(NSError *)) {
+    UITableViewController *controller=[[NSClassFromString(@"DARLibraryController") alloc] init];
+    [controller loadViewIfNeeded];
+    DARPut(controller,@"setFiles:",@[imported]);
+    NSIndexPath *index=[NSIndexPath indexPathForRow:0 inSection:0];
+    UITableViewCell *cell=[controller.tableView.dataSource tableView:controller.tableView cellForRowAtIndexPath:index];
+    cell.frame=CGRectMake(0,0,320,64);[cell layoutIfNeeded];
+    FCheck([cell.accessoryView isKindOfClass:UIStackView.class],@"each audio row exposes inline controls");
+    NSArray *buttons=((UIStackView *)cell.accessoryView).arrangedSubviews;
+    FCheck(buttons.count==2,@"audio row contains preview and Send buttons");
+    UIButton *play=buttons[0],*send=buttons[1];
+    FCheck([play.accessibilityIdentifier isEqual:@"DAR.audio.play"] && [send.accessibilityIdentifier isEqual:@"DAR.audio.send"] && [send.configuration.title isEqual:@"发送"],@"inline controls have accessible preview and Send labels");
+    FCheck(CGRectGetMaxX(cell.textLabel.frame)<=CGRectGetMinX(cell.accessoryView.frame),@"audio filename does not overlap inline controls at narrow width");
+    [play sendActionsForControlEvents:UIControlEventTouchUpInside];
+    FCheck([((AVAudioPlayer *)DARGet(controller,@"player")).url isEqual:imported],@"preview button targets its own audio file");
+    NSURL *other=[DARAudioLibrary.shared importFile:fixture name:@"other.wav" error:NULL];
+    FCheck(other!=nil,@"second audio fixture imports for row binding regression");
+    DARPut(controller,@"setFiles:",@[other,imported]);
+    [send sendActionsForControlEvents:UIControlEventTouchUpInside];
+    FCheck([DARGet(controller,@"preparingFile") isEqual:imported],@"captured Send button keeps its file after list reordering");
+    UITableViewCell *busy=[controller.tableView.dataSource tableView:controller.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:0]];
+    UIButton *busySend=((UIStackView *)busy.accessoryView).arrangedSubviews[1];
+    FCheck(!busySend.enabled && busySend.configuration.showsActivityIndicator,@"preparing row shows a spinner and prevents duplicate taps");
+    UIBarButtonItem *cancel=controller.toolbarItems.firstObject;
+    [UIApplication.sharedApplication sendAction:cancel.action to:cancel.target from:cancel forEvent:nil];
+    FCheck(!DARGet(controller,@"preparingFile") && !DARAudioLibrary.shared.armed,@"cancel clears row busy and pending audio states");
+    [send sendActionsForControlEvents:UIControlEventTouchUpInside];
+    FCheck([DARGet(controller,@"preparingFile") isEqual:imported],@"Send can restart immediately after cancellation");
+    WaitForAudioRow(controller,300,^(NSError *error){
+        [DARAudioLibrary.shared removeFile:other error:NULL];completion(error);
+    });
+}
 void DARRunFeatureTests(void(^completion)(void)) {
     TestSettingsIPMenus();
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.MP3"],nil) isEqual:@"mp3"],@"missing Content-Type falls back to the source audio extension");
@@ -194,7 +236,7 @@ void DARRunFeatureTests(void(^completion)(void)) {
     FCheck(![library importFile:invalid name:@"invalid" error:&error],@"invalid audio import is rejected");
     FCheck(![library removeFile:fixture error:&error],@"library delete refuses files outside its directory");
     DARSetOption(DAROptionCommentAudio,YES);
-    [library prepareFile:imported completion:^(NSError *prepareError){
+    TestAudioRowControls(imported,fixture,^(NSError *prepareError){
         FCheck(!prepareError && library.armed,@"audio is transcoded and armed only after explicit selection");
         FCheck(library.preparedDuration>1.9 && library.preparedDuration<2.1,@"prepared audio preserves actual duration");
         NSURL *recording=[temporary URLByAppendingPathComponent:@"comment.m4a"];
@@ -246,6 +288,6 @@ void DARRunFeatureTests(void(^completion)(void)) {
             }];
             }];
         }];
-    }];
+    });
 }
 #pragma clang diagnostic pop
