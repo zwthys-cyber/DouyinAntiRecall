@@ -13,6 +13,7 @@
 #include <math.h>
 extern void DARFeatureAssert(BOOL,NSString *);
 extern void DARRunNotificationTests(void);
+extern void DARRunPushBindingTests(void);
 static void FCheck(BOOL condition,NSString *message) { DARFeatureAssert(condition,message); }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -104,7 +105,7 @@ static UIButton *FindLoginDiagnosticsButton(void) {
 static void TestLoginDiagnosticsButton(void) {
     UIButton *found=FindLoginDiagnosticsButton();UIWindow *overlay=found.window;
     [overlay layoutIfNeeded];
-    FCheck(found!=nil && [found.titleLabel.text containsString:@"v0.2.7"] && CGRectContainsRect(overlay.bounds,[found convertRect:found.bounds toView:overlay]),@"diagnostic overlay displays its version within visible window bounds");
+    FCheck(found!=nil && [found.titleLabel.text containsString:@"v0.2.8"] && CGRectContainsRect(overlay.bounds,[found convertRect:found.bounds toView:overlay]),@"diagnostic overlay displays its version within visible window bounds");
     FCheck(overlay.windowLevel>UIWindowLevelAlert && !overlay.isKeyWindow && !overlay.canBecomeKeyWindow,@"diagnostic overlay stays above login dialogs without stealing keyboard focus");
     FCheck([overlay hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"diagnostic overlay passes through touches outside its button");
     CGPoint center=[found convertPoint:CGPointMake(CGRectGetMidX(found.bounds),CGRectGetMidY(found.bounds)) toView:overlay];
@@ -519,6 +520,7 @@ static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completi
 }
 static void RunFeatureTestsWithEntry(void(^completion)(void)) {
     FCheck(DAROptionEnabled(DAROptionManualAudioDuration),@"manual comment duration is enabled by default");
+    DARRunPushBindingTests();
     DARRunNotificationTests();
     TestSettingsIPMenus();
     TestLoginDiagnostics();

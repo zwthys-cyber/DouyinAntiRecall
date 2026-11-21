@@ -1,6 +1,7 @@
 #import "DARNotifications.h"
 #import "DARFeatures.h"
 #import "DARLoginDiagnostics.h"
+#import "DARPushBinding.h"
 
 static void DARNotificationMain(void (^block)(void)) {
     if(NSThread.isMainThread)block();else dispatch_async(dispatch_get_main_queue(),block);
@@ -46,7 +47,7 @@ void DARRepairNotificationAccess(id<DARNotificationService> service,id environme
                 completion(@"通知权限已允许，但签名缺少有效的 aps-environment。插件不能补写签名授权；需要在签名工具中使用支持推送的有效配置重新签名。");return;
             }
             [service registerRemote];
-            completion(@"已重新发起 APNs 注册。等待数秒后点“刷新状态”查看；这一步尚不能确认远程私信已送达。");
+            completion(@"已发起注册重试，并尝试通过宿主推送服务按需绑定。等待数秒后点“刷新状态”查看；这一步尚不能确认远程私信已送达。");
         });};
         if(status==UNAuthorizationStatusNotDetermined || status==UNAuthorizationStatusProvisional)[service requestPermission:finishPermission];
         else finishPermission(DARNotificationAllowed(status),nil);
@@ -73,7 +74,9 @@ void DARTestNotificationAccess(id<DARNotificationService> service,void (^complet
 - (void)requestPermission:(void (^)(BOOL,NSError *))completion {
     [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:UNAuthorizationOptionAlert|UNAuthorizationOptionSound|UNAuthorizationOptionBadge completionHandler:completion];
 }
-- (void)registerRemote { [UIApplication.sharedApplication registerForRemoteNotifications]; }
+- (void)registerRemote {
+    if(!DARRetryHostPushBinding())[UIApplication.sharedApplication registerForRemoteNotifications];
+}
 - (void)scheduleLocalTest:(void (^)(NSError *))completion {
     UNMutableNotificationContent *content=[UNMutableNotificationContent new];
     content.title=@"抖音增强 · 本地通知测试";content.body=@"本地提醒正常。这不是私信，也不代表远程推送已恢复。";content.sound=UNNotificationSound.defaultSound;
@@ -93,6 +96,7 @@ void DARTestNotificationAccess(id<DARNotificationService> service,void (^complet
     [super viewDidLoad];self.title=@"消息通知修复";self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=50;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.service=[DARSystemNotificationService new];
+    (void)DARInstallPushBindingObservers();
     NSBundle *bundle=NSBundle.mainBundle;NSDictionary *attributes=[NSFileManager.defaultManager attributesOfItemAtPath:bundle.executablePath error:NULL];
     NSData *data=[attributes[NSFileSize] unsignedLongLongValue]<=16*1024*1024?[NSData dataWithContentsOfFile:bundle.executablePath]:nil;
     self.environment=DARDiagnosticEntitlements(data)[@"aps-environment"];
@@ -106,7 +110,7 @@ void DARTestNotificationAccess(id<DARNotificationService> service,void (^complet
     __weak typeof(self) weak=self;
     [self.service readState:^(NSDictionary *state){DARNotificationMain(^{
         typeof(self) strong=weak;if(!strong)return;
-        strong.report=DARNotificationReport(state,strong.environment);[strong.tableView reloadData];
+        strong.report=[NSString stringWithFormat:@"%@\n\n%@",DARNotificationReport(state,strong.environment),DARPushBindingReport()];[strong.tableView reloadData];
     });}];
 }
 - (void)showResult:(NSString *)result {self.result=result;[self refresh];}

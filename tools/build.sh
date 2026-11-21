@@ -8,7 +8,7 @@ xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK_PATH" \
   -Wall -Wextra -Werror -dynamiclib -framework Foundation -framework UIKit -framework CoreGraphics -framework AVFoundation -framework CoreMedia -framework ImageIO -framework Photos -framework UniformTypeIdentifiers -framework UserNotifications \
   -install_name @rpath/DouyinAntiRecall.dylib \
   -Wl,-dead_strip -Wl,-headerpad_max_install_names \
-  src/DouyinAntiRecall.m src/DARCache.m src/DARBadge.m src/DAROptions.m src/DARRuntime.m src/DARSettings.m src/DARLoginDiagnostics.m src/DARNotifications.m src/DARIP.m src/DARAudio.m src/DARMedia.m src/DARPhotoDate.m -o build/DouyinAntiRecall.dylib
+  src/DouyinAntiRecall.m src/DARCache.m src/DARBadge.m src/DAROptions.m src/DARRuntime.m src/DARSettings.m src/DARLoginDiagnostics.m src/DARNotifications.m src/DARPushBinding.m src/DARIP.m src/DARAudio.m src/DARMedia.m src/DARPhotoDate.m -o build/DouyinAntiRecall.dylib
 codesign --force --sign - --timestamp=none build/DouyinAntiRecall.dylib
 codesign --verify --strict build/DouyinAntiRecall.dylib
 xcrun lipo -info build/DouyinAntiRecall.dylib
