@@ -84,7 +84,7 @@ void DARToast(NSString *message) {
 }
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(__unused NSInteger)section { return self.files.count; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(__unused NSInteger)section {
-    return DARAudioLibrary.shared.armed?@"已准备下一条评论语音。返回评论区，录制约 1 秒后松开，发送已选音频。5 分钟内有效，仅使用一次。":@"右侧按钮可试听或发送。发送会先准备音频，随后回评论区录约 1 秒松开完成发送，最长取前 29.5 秒。点文件可打开更多操作。";
+    return DARAudioLibrary.shared.armed?@"已准备下一条评论语音。返回评论区，手动录音后松开发送，评论时长默认跟随录音时长，音频内容不裁剪。5 分钟内有效，仅使用一次。":@"右侧按钮可试听或发送。发送会先准备音频，随后回评论区录音松开发送。评论时长默认跟随手动录音，音频内容保留原时长。点文件可打开更多操作。";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"audio"];
@@ -142,8 +142,8 @@ void DARToast(NSString *message) {
         if(!self || generation!=self.prepareGeneration)return;
         self.preparingFile=nil; self.navigationItem.prompt=nil; [self reload];
         if(error){DARToast(error.localizedDescription);return;}
-        if(!self.view.window || self.presentedViewController){DARToast(@"下一条评论音频已准备，回评论区录约 1 秒发送");return;}
-        UIAlertController *ready=[UIAlertController alertControllerWithTitle:@"音频已准备" message:@"返回评论区，录制约 1 秒后松开，即可发送这段音频。仅替换下一次评论语音，5 分钟内有效。" preferredStyle:UIAlertControllerStyleAlert];
+        if(!self.view.window || self.presentedViewController){DARToast(@"下一条评论音频已准备，回评论区手动录音松开发送");return;}
+        UIAlertController *ready=[UIAlertController alertControllerWithTitle:@"音频已准备" message:@"返回评论区手动录音后松开。默认使用本次手动录音的评论时长，音频文件保留原长度；关闭“评论时长跟随手动录音”可使用库内音频时长。仅替换下一次评论语音，5 分钟内有效。" preferredStyle:UIAlertControllerStyleAlert];
         [ready addAction:[UIAlertAction actionWithTitle:@"完成" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self close];}]];
         [self presentViewController:ready animated:YES completion:nil];
     }];
@@ -181,13 +181,13 @@ void DAROpenAudioLibrary(UIViewController *presenter) {
 - (NSArray *)rows { return @[
     @[@[@"消息防撤回",DAROptionAntiRecall],@[@"显示已撤回标记",DAROptionBadge]],
     @[@[@"显示 IP 属地",DAROptionIP]],
-    @[@[@"视频音频入库",DAROptionAudioLibrary],@[@"评论区发送库内音频",DAROptionCommentAudio],@[@"打开音频库",@"library"]],
-    @[@[@"无水印保存图片",DAROptionImages]]]; }
+    @[@[@"视频音频入库",DAROptionAudioLibrary],@[@"评论区发送库内音频",DAROptionCommentAudio],@[@"评论时长跟随手动录音",DAROptionManualAudioDuration],@[@"打开音频库",@"library"]],
+    @[@[@"无水印保存图文",DAROptionImages],@[@"评论图片无水印",DAROptionCommentImages]]]; }
 - (NSInteger)numberOfSectionsInTableView:(__unused UITableView *)tableView { return self.rows.count; }
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self.rows[section] count]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForHeaderInSection:(NSInteger)section { return @[@"消息",@"视频信息",@"音频",@"图片"][section]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次，最长取前 29.5 秒。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，有 EXIF 拍摄日期时按该日期存入相册；缺失时使用系统默认时间。需允许添加到相册。\nv0.2.3 · 适配抖音 41.2.0（412021）"][section];
+    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次。默认评论时长跟随手动录音，音频内容保留原时长、不截断。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，有有效拍摄日期时按该日期存入相册；缺失时使用系统默认时间。评论图片开关让原生保存使用原图地址；图片像素本身已有水印无法移除。需允许添加到相册。\nv0.2.4 · 适配抖音 41.2.0（412021）"][section];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"option"];
@@ -239,6 +239,6 @@ BOOL DARInstallSettingsHooks(void) {
     return DARHook(NSClassFromString(@"AWESettingsViewModel"),@"sectionDataArray",(IMP)DARSettingsSections,&DAROriginalSettingsSections,"@",2);
 }
 BOOL DARInstallFeatures(void) {
-    BOOL settings=DARInstallSettingsHooks(), ip=DARInstallIPHooks(), menu=DARInstallMenuHooks(), audio=DARInstallAudioHooks();
-    return settings&&ip&&menu&&audio;
+    BOOL settings=DARInstallSettingsHooks(), ip=DARInstallIPHooks(), menu=DARInstallMenuHooks(), audio=DARInstallAudioHooks(), commentImages=DARInstallCommentImageHooks();
+    return settings&&ip&&menu&&audio&&commentImages;
 }

@@ -66,6 +66,18 @@ extern void DARFeatureAssert(BOOL,NSString *);
 @end
 @implementation FeatureModel
 @end
+@interface FeatureImageURL : NSObject
+@property(nonatomic,strong) NSArray *originURLList;
+@end
+@implementation FeatureImageURL
+@end
+@interface AWECommentImageModel : NSObject
+@property(nonatomic,strong) FeatureImageURL *originUrl,*nativeDownload;
+- (id)downloadUrl;
+@end
+@implementation AWECommentImageModel
+- (id)downloadUrl {return self.nativeDownload;}
+@end
 @interface AWEPlayInteractionTimestampElement : NSObject
 @property(strong)UILabel *timestampLabel;
 @property(strong)FeatureModel *model;
@@ -102,6 +114,8 @@ extern void DARFeatureAssert(BOOL,NSString *);
 @end
 @interface FeatureAudioInput : NSObject
 @property(copy)NSString *audioFilePath;
+@property NSInteger duration;
+@property double currentTime;
 @end
 @implementation FeatureAudioInput
 @end
@@ -142,6 +156,39 @@ static NSDate *UTCDate(NSInteger year,NSInteger month,NSInteger day,NSInteger ho
     calendar.timeZone=[NSTimeZone timeZoneForSecondsFromGMT:0];
     NSDateComponents *parts=[NSDateComponents new];parts.year=year;parts.month=month;parts.day=day;
     parts.hour=hour;parts.minute=minute;parts.second=second;return [calendar dateFromComponents:parts];
+}
+static NSData *OtherDateFixture(NSData *pixels,NSDictionary *iptc,NSString *path,NSString *value) {
+    CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)pixels,NULL);
+    NSMutableData *data=[NSMutableData new];
+    CGImageDestinationRef destination=CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data,CFSTR("public.jpeg"),1,NULL);
+    NSDictionary *properties=iptc?@{(__bridge NSString *)kCGImagePropertyIPTCDictionary:iptc}:@{};
+    if(path) {
+        CGMutableImageMetadataRef metadata=CGImageMetadataCreateMutable();
+        NSString *prefix=[path componentsSeparatedByString:@":"].firstObject;
+        NSString *space=[prefix isEqual:@"photoshop"]?@"http://ns.adobe.com/photoshop/1.0/":([prefix isEqual:@"exif"]?@"http://ns.adobe.com/exif/1.0/":@"http://ns.adobe.com/xap/1.0/");
+        CGImageMetadataRegisterNamespaceForPrefix(metadata,(__bridge CFStringRef)space,(__bridge CFStringRef)prefix,NULL);
+        BOOL set=CGImageMetadataSetValueWithPath(metadata,NULL,(__bridge CFStringRef)path,(__bridge CFStringRef)value);
+        FCheck(set,@"XMP fixture records the requested date tag");
+        CGImageRef image=CGImageSourceCreateImageAtIndex(source,0,NULL);
+        CGImageDestinationAddImageAndMetadata(destination,image,metadata,(__bridge CFDictionaryRef)properties);
+        CGImageRelease(image);CFRelease(metadata);
+    } else CGImageDestinationAddImageFromSource(destination,source,0,(__bridge CFDictionaryRef)properties);
+    BOOL saved=CGImageDestinationFinalize(destination);CFRelease(source);CFRelease(destination);
+    FCheck(saved,@"alternate date fixture writes real image metadata");return data;
+}
+static void TestOtherPhotoDates(NSData *pixels) {
+    for(NSString *path in @[@"exif:DateTimeOriginal",@"photoshop:DateCreated"]) {
+        NSData *xmp=OtherDateFixture(pixels,nil,path,@"2022-03-04T12:13:14.125+08:00");
+        NSDate *expected=[UTCDate(2022,3,4,4,13,14) dateByAddingTimeInterval:0.125];
+        NSDate *actual=DARPhotoCaptureDate(xmp);
+        FCheck(actual && fabs([actual timeIntervalSinceDate:expected])<0.001,@"XMP capture date honors fractional seconds and timezone");
+        NSDate *converted=DARPhotoCaptureDate(DARPhotoCompatibleJPEG(xmp));
+        FCheck(converted && fabs([converted timeIntervalSinceDate:expected])<0.001,@"XMP capture date survives JPEG compatibility conversion");
+    }
+    NSData *iptc=OtherDateFixture(pixels,@{(__bridge NSString *)kCGImagePropertyIPTCDateCreated:@"20220304",(__bridge NSString *)kCGImagePropertyIPTCTimeCreated:@"121314+0800"},nil,nil);
+    FCheck([DARPhotoCaptureDate(iptc) isEqual:UTCDate(2022,3,4,4,13,14)],@"IPTC original content date and time are recognized");
+    FCheck(!DARPhotoCaptureDate(OtherDateFixture(pixels,nil,@"xmp:CreateDate",@"2022-03-04T12:13:14+08:00")),@"generic XMP file creation time is never treated as capture time");
+    FCheck(!DARPhotoCaptureDate(OtherDateFixture(pixels,nil,@"photoshop:DateCreated",@"2023-02-29T12:13:14+08:00")),@"invalid XMP calendar dates are rejected");
 }
 static void TestPhotoCaptureDates(NSData *pixels) {
     NSString *dateKey=(__bridge NSString *)kCGImagePropertyExifDateTimeOriginal;
@@ -237,6 +284,14 @@ static void TestSettingsIPMenus(void) {
     RegisterModernUploader();
     FCheck(DARInstallFeatures(),@"all new feature hooks match observed ABI and install");
     FCheck(DARInstallFeatures(),@"feature hook installation is idempotent");
+    AWECommentImageModel *commentImage=[AWECommentImageModel new];
+    FeatureImageURL *origin=[FeatureImageURL new];origin.originURLList=@[@"https://example.test/comment-original.jpg"];
+    FeatureImageURL *watermarked=[FeatureImageURL new];watermarked.originURLList=@[@"https://example.test/comment-watermarked.jpg"];
+    commentImage.originUrl=origin;commentImage.nativeDownload=watermarked;
+    DARSetOption(DAROptionCommentImages,NO);FCheck(commentImage.downloadUrl==watermarked,@"disabled comment image switch preserves native download");
+    DARSetOption(DAROptionCommentImages,YES);FCheck(commentImage.downloadUrl==origin,@"comment image download selects originUrl instead of the watermarked download URL");
+    origin.originURLList=@[@"file:///invalid"];FCheck(!commentImage.downloadUrl,@"missing comment originals do not silently save a watermarked fallback");
+    DARSetOption(DAROptionCommentImages,NO);
     AWESettingsViewModel *settings=[AWESettingsViewModel new];settings.sectionDataArray=@[];
     NSArray *sections=settings.sectionDataArray;
     FCheck(sections.count==1,@"native settings receives plugin section");
@@ -245,7 +300,7 @@ static void TestSettingsIPMenus(void) {
     FCheck(DARAugmentSettingsSections(sections,settings).count==1,@"settings entry is not duplicated");
     UITableViewController *plugin=[[NSClassFromString(@"DARSettingsController") alloc] init];[plugin loadViewIfNeeded];
     FCheck([plugin numberOfSectionsInTableView:plugin.tableView]==4,@"plugin settings groups cover messages IP audio and photos");
-    NSArray *rowCounts=@[@2,@1,@3,@1];
+    NSArray *rowCounts=@[@2,@1,@4,@2];
     for(NSUInteger section=0;section<4;section++)FCheck([plugin tableView:plugin.tableView numberOfRowsInSection:section]==[rowCounts[section] integerValue],@"settings includes all individual switches and audio-library entry");
     UITableViewCell *option=[plugin tableView:plugin.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:1]];
     UISwitch *toggle=(UISwitch *)option.accessoryView;toggle.on=YES;[toggle sendActionsForControlEvents:UIControlEventValueChanged];
@@ -272,6 +327,7 @@ static void TestSettingsIPMenus(void) {
         CGContextSetFillColorWithColor(context.CGContext,UIColor.blueColor.CGColor);CGContextFillRect(context.CGContext,CGRectMake(0,0,12,7));
     }];
     TestPhotoCaptureDates(UIImagePNGRepresentation(small));
+    TestOtherPhotoDates(UIImagePNGRepresentation(small));
     NSData *jpeg=DARPhotoCompatibleJPEG(UIImagePNGRepresentation(small));UIImage *compatible=[UIImage imageWithData:jpeg];
     FCheck(jpeg.length && CGImageGetWidth(compatible.CGImage)==12 && CGImageGetHeight(compatible.CGImage)==7,@"photo format fallback retains full pixel dimensions");
     FCheck(!DARPhotoCompatibleJPEG([@"invalid" dataUsingEncoding:NSUTF8StringEncoding]),@"invalid image data never produces a fake saved photo");
@@ -290,14 +346,44 @@ static void TestSettingsIPMenus(void) {
     AWEModernLongPressPanelTableViewController *modern=[AWEModernLongPressPanelTableViewController new];modern.dataArray=original;modern.awemeModel=model;
     FCheck([(AWELongPressPanelViewGroupModel *)modern.dataArray.firstObject groupArr].count==4,@"modern getter hook injects feature actions");
 }
-static NSURL *AudioFixture(NSURL *directory) {
+static NSURL *AudioFixtureSeconds(NSURL *directory,NSTimeInterval duration) {
     NSURL *url=[directory URLByAppendingPathComponent:@"fixture.wav"];
     AVAudioFormat *format=[[AVAudioFormat alloc] initStandardFormatWithSampleRate:44100 channels:1];
     NSError *error;AVAudioFile *file=[[AVAudioFile alloc] initForWriting:url settings:format.settings error:&error];
-    AVAudioPCMBuffer *buffer=[[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:88200];buffer.frameLength=88200;
+    AVAudioPCMBuffer *buffer=[[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:(AVAudioFrameCount)(duration*44100)];buffer.frameLength=buffer.frameCapacity;
     for(AVAudioFrameCount i=0;i<buffer.frameLength;i++)buffer.floatChannelData[0][i]=0.1f*sinf(2.0f*(float)M_PI*440.0f*(float)i/44100.0f);
     BOOL wrote=[file writeFromBuffer:buffer error:&error];
     FCheck(file && wrote && !error,@"audio fixture encodes without microphone or network access");return url;
+}
+static NSURL *AudioFixture(NSURL *directory) { return AudioFixtureSeconds(directory,2); }
+static void TestManualAudioDuration(void(^completion)(void)) {
+    DARSetOption(DAROptionCommentAudio,YES);DARSetOption(DAROptionManualAudioDuration,YES);
+    NSURL *directory=[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSURL *source=AudioFixtureSeconds(directory,32);
+    NSData *sourceBytes=[NSData dataWithContentsOfURL:source];
+    NSURL *file=[DARAudioLibrary.shared importFile:source name:@"full32.wav" error:NULL];
+    NSURL *recording=[directory URLByAppendingPathComponent:@"manual.m4a"];
+    [DARAudioLibrary.shared prepareFile:file completion:^(NSError *error){
+        FCheck(!error && DARAudioLibrary.shared.preparedDuration>31.9,@"audio longer than 29.5 seconds is prepared without truncation");
+        [sourceBytes writeToURL:recording atomically:YES];
+        FeatureRecorder *recorder=[FeatureRecorder new];recorder.url=recording;recorder.currentTime=1.25;
+        AWECommentAudioRecorderController *controller=[AWECommentAudioRecorderController new];
+        [controller audioRecorderDidFinishRecording:recorder success:YES error:nil];
+        NSTimeInterval actual=CMTimeGetSeconds([AVURLAsset URLAssetWithURL:recording options:nil].duration);
+        FCheck(controller.calls==1 && fabs(controller.observedDuration-1.25)<0.001 && actual>31.9 && actual<32.1,@"manual release duration is preserved while the outgoing audio file keeps its full length");
+        FCheck([[NSData dataWithContentsOfURL:source] isEqual:sourceBytes],@"preparation never modifies the source audio file");
+        [DARAudioLibrary.shared prepareFile:file completion:^(NSError *modernError){
+            FCheck(!modernError,@"full audio can be prepared for the modern uploader");
+            [sourceBytes writeToURL:recording atomically:YES];
+            FeatureAudioInput *input=[FeatureAudioInput new];input.audioFilePath=recording.path;input.duration=2;input.currentTime=2.5;
+            id manager=[[NSClassFromString(@"_TtC31AWECommentMediaManagerSwiftImpl27CommentMediaUploaderManager") alloc] init];
+            ((id(*)(id,SEL,id))objc_msgSend)(manager,NSSelectorFromString(@"audioUploader:"),input);
+            FCheck(input.duration==2 && input.currentTime==2.5 && CMTimeGetSeconds([AVURLAsset URLAssetWithURL:recording options:nil].duration)>31.9,@"modern upload retains native manual duration fields and the complete audio file");
+            [DARAudioLibrary.shared removeFile:file error:NULL];[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+            DARSetOption(DAROptionCommentAudio,NO);completion();
+        }];
+    }];
 }
 static void WaitForAudioRow(UITableViewController *controller, NSUInteger remaining, void(^completion)(NSError *)) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,50*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
@@ -342,7 +428,9 @@ static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completi
     });
 }
 void DARRunFeatureTests(void(^completion)(void)) {
+    FCheck(DAROptionEnabled(DAROptionManualAudioDuration),@"manual comment duration is enabled by default");
     TestSettingsIPMenus();
+    DARSetOption(DAROptionManualAudioDuration,NO);
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.MP3"],nil) isEqual:@"mp3"],@"missing Content-Type falls back to the source audio extension");
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/audio?token=123"],@"audio/mpeg") isEqual:@"mp3"],@"downloaded MP3 retains its format even when the URL has no extension");
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.WAV?token=123"],@"application/octet-stream") isEqual:@"wav"],@"audio extension fallback ignores query tokens and normalizes case");
@@ -404,7 +492,7 @@ void DARRunFeatureTests(void(^completion)(void)) {
                     FCheck(cancelledError && !library.armed,@"disabling during transcoding cannot rearm audio later");
                     [library removeFile:imported error:NULL];[NSFileManager.defaultManager removeItemAtURL:temporary error:NULL];
                     for(NSString *key in @[DAROptionIP,DAROptionAudioLibrary,DAROptionCommentAudio,DAROptionImages])DARSetOption(key,NO);
-                    TestImageSavePipeline(completion);
+                    TestManualAudioDuration(^{TestImageSavePipeline(completion);});
                 }];
                 DARSetOption(DAROptionCommentAudio,NO);
             }];

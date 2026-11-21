@@ -14,6 +14,7 @@ FOUNDATION_EXPORT NSArray *DARAugmentLongPressGroups(NSArray *groups, id model, 
 FOUNDATION_EXPORT NSArray *DARAugmentSettingsSections(NSArray *sections, id viewModel);
 FOUNDATION_EXPORT BOOL DARInstallIPHooks(void);
 FOUNDATION_EXPORT BOOL DARInstallMenuHooks(void);
+FOUNDATION_EXPORT BOOL DARInstallCommentImageHooks(void);
 FOUNDATION_EXPORT BOOL DARInstallAudioHooks(void);
 FOUNDATION_EXPORT BOOL DARInstallSettingsHooks(void);
 FOUNDATION_EXPORT void DARSaveImages(id model, BOOL all);
