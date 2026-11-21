@@ -9,7 +9,7 @@
 #import <objc/message.h>
 #include <math.h>
 extern void DARFeatureAssert(BOOL,NSString *);
-#define FCheck(c,m) DARFeatureAssert((c),(m))
+static void FCheck(BOOL condition,NSString *message) { DARFeatureAssert(condition,message); }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 @interface AWESettingItemModel : NSObject
