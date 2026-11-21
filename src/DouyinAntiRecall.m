@@ -7,6 +7,7 @@
 #import "DAROptions.h"
 #ifndef DAR_TESTING
 #import "DARFeatures.h"
+#import "DARLoginDiagnostics.h"
 #endif
 #include <string.h>
 
@@ -160,8 +161,10 @@ __attribute__((constructor)) static void DARInitialize(void) {
         NSBundle *bundle = NSBundle.mainBundle;
         if (![bundle.bundleIdentifier isEqualToString:@"com.ss.iphone.ugc.Aweme"]) return;
         DARLog = os_log_create("local.douyin.antirecall", "plugin");
-        if (![[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] isEqualToString:@"41.2.0"] ||
-            ![[bundle objectForInfoDictionaryKey:@"CFBundleVersion"] isEqualToString:@"412021"]) {
+        BOOL compatible=[[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] isEqualToString:@"41.2.0"] &&
+            [[bundle objectForInfoDictionaryKey:@"CFBundleVersion"] isEqualToString:@"412021"];
+        DARStartLoginDiagnostics(compatible);
+        if (!compatible) {
             os_log_error(DARLog, "Unsupported Douyin build; hook disabled");
             return;
         }

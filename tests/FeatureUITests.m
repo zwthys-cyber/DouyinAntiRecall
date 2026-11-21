@@ -38,6 +38,16 @@ static id LoginObservedError,LoginObservedParameters,LoginObservedResponse,Login
     LoginDecisionCalls++;LoginObservedDecision=decision;if(completion)completion(@"decision-original");
 }
 @end
+static NSInteger LoginUpgradePanelCalls;
+static NSArray *LoginUpgradePanelArguments;
+@interface AWEAccountForceUpgradeManager : NSObject
+- (void)showIdentityUpgradeAPPPanelWithTitle:(id)title message:(id)message confirmTitle:(id)confirm cancelTitle:(id)cancel onViewController:(id)controller;
+@end
+@implementation AWEAccountForceUpgradeManager
+- (void)showIdentityUpgradeAPPPanelWithTitle:(id)title message:(id)message confirmTitle:(id)confirm cancelTitle:(id)cancel onViewController:(id)controller {
+    LoginUpgradePanelCalls++;LoginUpgradePanelArguments=@[title,message,confirm,cancel,controller];
+}
+@end
 static void DiagnosticPut32(NSMutableData *data,NSUInteger offset,uint32_t value,BOOL big) {
     uint32_t encoded=big?OSSwapHostToBigInt32(value):OSSwapHostToLittleInt32(value);
     [data replaceBytesInRange:NSMakeRange(offset,4) withBytes:&encoded];
@@ -68,7 +78,12 @@ static void TestLoginDiagnostics(void) {
     [handler process1049Error:error fullData:response completion:^(NSString *result){FCheck([result isEqual:@"1049-original"],@"1049 diagnostic preserves original completion result");callbacks++;}];
     [IESAccountIdentityVerificationDecisionDispatcher showForceUpdateDecision:response completion:^(NSString *result){FCheck([result isEqual:@"decision-original"],@"force-update diagnostic preserves original completion result");callbacks++;}];
     FCheck(Login1049Calls==1 && LoginDecisionCalls==1 && LoginObservedDecision==response && callbacks==3,@"diagnostic routes do not skip error handling or force-update decisions");
+    AWEAccountForceUpgradeManager *upgrade=[AWEAccountForceUpgradeManager new];
+    NSArray *arguments=@[@"SECRET-title",@"SECRET-message",@"confirm",@"cancel",[NSObject new]];
+    [upgrade showIdentityUpgradeAPPPanelWithTitle:arguments[0] message:arguments[1] confirmTitle:arguments[2] cancelTitle:arguments[3] onViewController:arguments[4]];
+    FCheck(LoginUpgradePanelCalls==1 && [LoginUpgradePanelArguments isEqual:arguments],@"upgrade-panel observation forwards all original UI arguments exactly once");
     NSString *report=DARLoginDiagnosticReport();
+    FCheck([report containsString:@"观察点：4/4"] && [report containsString:@"宿主展示账户升级弹窗"],@"diagnostic report includes installation status and the actual upgrade UI path");
     FCheck([report containsString:@"code=1049"] && [report containsString:@"进入身份验证强制更新路径"],@"login report distinguishes actual numeric errors from routing decisions");
     FCheck(![report containsString:@"SECRET-"],@"login report never captures phone OTP error text or token payloads");
     for(NSInteger i=0;i<20;i++)[handler handleError:[NSError errorWithDomain:@"Bounded.Test" code:9000+i userInfo:nil] extraParams:nil response:nil completion:nil];
@@ -77,11 +92,22 @@ static void TestLoginDiagnostics(void) {
     NSString *before=DARLoginDiagnosticReport();[handler handleError:nil extraParams:nil response:nil completion:nil];
     FCheck([before isEqual:DARLoginDiagnosticReport()],@"nil errors are forwarded without generating misleading failure events");
 }
+static UIButton *FindLoginDiagnosticsButton(void) {
+    NSMutableOrderedSet *windows=[NSMutableOrderedSet new];
+    id legacy=DARGet(UIApplication.sharedApplication,@"windows");if([legacy isKindOfClass:NSArray.class])[windows addObjectsFromArray:legacy];
+    for(UIScene *scene in UIApplication.sharedApplication.connectedScenes)if([scene isKindOfClass:UIWindowScene.class])[windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+    for(UIWindow *window in windows)if(!window.hidden && [window.accessibilityIdentifier isEqual:@"DAR.login.overlay"])
+        for(UIView *view in window.rootViewController.view.subviews)if([view.accessibilityIdentifier isEqual:@"DAR.login.diagnostics"])return (UIButton *)view;
+    return nil;
+}
 static void TestLoginDiagnosticsButton(void) {
-    UIWindow *window=DARTopController().view.window;UIButton *found;
-    for(UIView *view in window.subviews)if([view.accessibilityIdentifier isEqual:@"DAR.login.diagnostics"]){found=(UIButton *)view;break;}
-    [window layoutIfNeeded];
-    FCheck(found!=nil && [found.titleLabel.text isEqual:@"登录诊断"] && CGRectContainsRect(window.bounds,found.frame),@"login failure exposes an accessible diagnostic button within the visible window");
+    UIButton *found=FindLoginDiagnosticsButton();UIWindow *overlay=found.window;
+    [overlay layoutIfNeeded];
+    FCheck(found!=nil && [found.titleLabel.text containsString:@"v0.2.6"] && CGRectContainsRect(overlay.bounds,[found convertRect:found.bounds toView:overlay]),@"diagnostic overlay displays its version within visible window bounds");
+    FCheck(overlay.windowLevel>UIWindowLevelAlert && !overlay.isKeyWindow && !overlay.canBecomeKeyWindow,@"diagnostic overlay stays above login dialogs without stealing keyboard focus");
+    FCheck([overlay hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"diagnostic overlay passes through touches outside its button");
+    CGPoint center=[found convertPoint:CGPointMake(CGRectGetMidX(found.bounds),CGRectGetMidY(found.bounds)) toView:overlay];
+    FCheck([overlay hitTest:center withEvent:nil]==found,@"diagnostic overlay button remains tappable");
 }
 @interface AWESettingItemModel : NSObject
 @property(copy)NSString *identifier,*title,*subTitle,*svgIconImageName;
@@ -488,7 +514,7 @@ static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completi
         [DARAudioLibrary.shared removeFile:other error:NULL];completion(error);
     });
 }
-void DARRunFeatureTests(void(^completion)(void)) {
+static void RunFeatureTestsWithEntry(void(^completion)(void)) {
     FCheck(DAROptionEnabled(DAROptionManualAudioDuration),@"manual comment duration is enabled by default");
     TestSettingsIPMenus();
     TestLoginDiagnostics();
@@ -561,5 +587,18 @@ void DARRunFeatureTests(void(^completion)(void)) {
             }];
         }];
     });
+}
+static void WaitForStartupDiagnosticEntry(NSUInteger remaining,void(^completion)(void)) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,50*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+        if(FindLoginDiagnosticsButton()) {
+            FCheck([DARLoginDiagnosticReport() containsString:@"尚未捕获登录错误"],@"startup diagnostic entry exists before any login failure callback");
+            TestLoginDiagnosticsButton();RunFeatureTestsWithEntry(completion);return;
+        }
+        if(!remaining){FCheck(NO,@"startup diagnostic entry becomes visible after window activation");return;}
+        WaitForStartupDiagnosticEntry(remaining-1,completion);
+    });
+}
+void DARRunFeatureTests(void(^completion)(void)) {
+    DARStartLoginDiagnostics(YES);WaitForStartupDiagnosticEntry(200,completion);
 }
 #pragma clang diagnostic pop
