@@ -1,5 +1,6 @@
 #import "DARLoginDiagnostics.h"
 #import "DARFeatures.h"
+#import "DARNotifications.h"
 #import "DARRuntime.h"
 #import <mach-o/loader.h>
 #import <libkern/OSByteOrder.h>
@@ -71,6 +72,7 @@ void DAROpenLoginDiagnostics(UIViewController *presenter) {
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"登录诊断" message:report preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"复制诊断" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){UIPasteboard.generalPasteboard.string=report;DARToast(@"已复制登录诊断");}]];
     [alert addAction:[UIAlertAction actionWithTitle:@"收起入口" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){DARLoginEntryHidden=YES;DARLoginOverlay.hidden=YES;}]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"消息通知修复" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){DAROpenNotificationRepair(nil);}]];
     [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
     [presenter presentViewController:alert animated:YES completion:nil];
 }
@@ -87,9 +89,9 @@ static void DARRefreshLoginEntry(void) {
         window.windowLevel=UIWindowLevelAlert+1;
         UIViewController *root=[UIViewController new];root.view.backgroundColor=UIColor.clearColor;window.rootViewController=root;
         UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];
-        [button setTitle:@"诊断 v0.2.6" forState:UIControlStateNormal];button.titleLabel.font=[UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        [button setTitle:@"诊断 v0.2.7" forState:UIControlStateNormal];button.titleLabel.font=[UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
         [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];button.backgroundColor=UIColor.systemBlueColor;
-        button.layer.cornerRadius=18;button.accessibilityIdentifier=@"DAR.login.diagnostics";button.accessibilityLabel=@"登录诊断 v0.2.6";button.translatesAutoresizingMaskIntoConstraints=NO;
+        button.layer.cornerRadius=18;button.accessibilityIdentifier=@"DAR.login.diagnostics";button.accessibilityLabel=@"登录诊断 v0.2.7";button.translatesAutoresizingMaskIntoConstraints=NO;
         [button addAction:[UIAction actionWithHandler:^(__unused UIAction *action){DAROpenLoginDiagnostics(nil);}] forControlEvents:UIControlEventTouchUpInside];
         [root.view addSubview:button];
         [NSLayoutConstraint activateConstraints:@[[button.trailingAnchor constraintEqualToAnchor:root.view.safeAreaLayoutGuide.trailingAnchor constant:-12],
@@ -145,7 +147,7 @@ NSString *DARLoginDiagnosticReport(void) {
     NSMutableArray *events=DARLoginEvents();NSString *recent;
     @synchronized(events){recent=events.count?[events componentsJoinedByString:@"\n"]:@"尚未捕获登录错误";}
     NSUInteger installed=(DAROriginalLoginError!=NULL)+(DAROriginal1049!=NULL)+(DAROriginalForceUpdate!=NULL)+(DAROriginalUpgradePanel!=NULL);
-    return [NSString stringWithFormat:@"v0.2.6 已加载\n宿主允许观察：%@\n观察点：%lu/4\niOS %@\n抖音 %@ (%@)\nBundle %@\nTeam %@\nApp ID %@\nApp Attest %@\n签名字段：%@\n\n%@\n\n仅记录错误域、错误码和处理路径，重启清空。不读取错误正文、手机号、验证码或令牌。",
+    return [NSString stringWithFormat:@"v0.2.7 已加载\n宿主允许观察：%@\n观察点：%lu/4\niOS %@\n抖音 %@ (%@)\nBundle %@\nTeam %@\nApp ID %@\nApp Attest %@\n签名字段：%@\n\n%@\n\n仅记录错误域、错误码和处理路径，重启清空。不读取错误正文、手机号、验证码或令牌。",
         DARLoginObservationAllowed?@"是":@"否（版本不匹配，仅显示诊断）",(unsigned long)installed,
         UIDevice.currentDevice.systemVersion,[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"未知",
         [bundle objectForInfoDictionaryKey:@"CFBundleVersion"]?:@"未知",bundle.bundleIdentifier?:@"未知",

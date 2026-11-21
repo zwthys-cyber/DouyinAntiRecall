@@ -1,5 +1,6 @@
 #import "DARFeatures.h"
 #import "DARLoginDiagnostics.h"
+#import "DARNotifications.h"
 #import "DARAudio.h"
 #import "DAROptions.h"
 #import "DARRuntime.h"
@@ -190,18 +191,18 @@ void DAROpenAudioLibrary(UIViewController *presenter) {
     @[@[@"显示 IP 属地",DAROptionIP]],
     @[@[@"视频音频入库",DAROptionAudioLibrary],@[@"评论区发送库内音频",DAROptionCommentAudio],@[@"评论时长跟随手动录音",DAROptionManualAudioDuration],@[@"打开音频库",@"library"]],
     @[@[@"无水印保存图文",DAROptionImages],@[@"评论图片无水印",DAROptionCommentImages]],
-    @[@[@"查看登录诊断",@"diagnostics"]]]; }
+    @[@[@"查看登录诊断",@"diagnostics"],@[@"消息通知修复",@"notifications"]]]; }
 - (NSInteger)numberOfSectionsInTableView:(__unused UITableView *)tableView { return self.rows.count; }
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self.rows[section] count]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForHeaderInSection:(NSInteger)section { return @[@"消息",@"视频信息",@"音频",@"图片",@"诊断"][section]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次。默认评论时长跟随手动录音，音频内容保留原时长、不截断。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，有有效拍摄日期时按该日期存入相册；缺失时使用系统默认时间。评论图片开关让原生保存使用原图地址；图片像素本身已有水印无法移除。需允许添加到相册。",@"仅保留最近 16 条错误码和处理路径，重启清空。启动后即可点“诊断 v0.2.6”，未登录也能查看加载及观察点状态。\nv0.2.6 · 适配抖音 41.2.0（412021）"][section];
+    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次。默认评论时长跟随手动录音，音频内容保留原时长、不截断。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，有有效拍摄日期时按该日期存入相册；缺失时使用系统默认时间。评论图片开关让原生保存使用原图地址；图片像素本身已有水印无法移除。需允许添加到相册。",@"消息通知修复可申请权限、重新发起推送注册、测试本地提醒；不保证重签身份的远程消息能送达。登录诊断仅保留最近 16 条错误码和处理路径，重启清空。启动后即可点“诊断 v0.2.7”，未登录也能查看加载及观察点状态。\nv0.2.7 · 适配抖音 41.2.0（412021）"][section];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"option"];
     if(!cell)cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"option"];
     NSArray *row=self.rows[indexPath.section][indexPath.row]; cell.textLabel.text=row[0];
-    if([row[1] isEqual:@"library"] || [row[1] isEqual:@"diagnostics"]) {cell.accessoryView=nil;cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;cell.selectionStyle=UITableViewCellSelectionStyleDefault;}
+    if([row[1] isEqual:@"library"] || [row[1] isEqual:@"diagnostics"] || [row[1] isEqual:@"notifications"]) {cell.accessoryView=nil;cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;cell.selectionStyle=UITableViewCellSelectionStyleDefault;}
     else {
         cell.accessoryType=UITableViewCellAccessoryNone; cell.selectionStyle=UITableViewCellSelectionStyleNone;
         UISwitch *toggle=[UISwitch new]; toggle.accessibilityIdentifier=row[1]; toggle.on=DAROptionEnabled(row[1]);
@@ -213,6 +214,7 @@ void DAROpenAudioLibrary(UIViewController *presenter) {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if([self.rows[indexPath.section][indexPath.row][1] isEqual:@"library"])DAROpenAudioLibrary(self);
     else if([self.rows[indexPath.section][indexPath.row][1] isEqual:@"diagnostics"])DAROpenLoginDiagnostics(self);
+    else if([self.rows[indexPath.section][indexPath.row][1] isEqual:@"notifications"])DAROpenNotificationRepair(self);
 }
 @end
 void DAROpenSettings(UIViewController *presenter) {

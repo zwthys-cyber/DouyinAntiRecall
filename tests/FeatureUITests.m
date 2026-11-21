@@ -12,6 +12,7 @@
 #import <objc/message.h>
 #include <math.h>
 extern void DARFeatureAssert(BOOL,NSString *);
+extern void DARRunNotificationTests(void);
 static void FCheck(BOOL condition,NSString *message) { DARFeatureAssert(condition,message); }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -103,7 +104,7 @@ static UIButton *FindLoginDiagnosticsButton(void) {
 static void TestLoginDiagnosticsButton(void) {
     UIButton *found=FindLoginDiagnosticsButton();UIWindow *overlay=found.window;
     [overlay layoutIfNeeded];
-    FCheck(found!=nil && [found.titleLabel.text containsString:@"v0.2.6"] && CGRectContainsRect(overlay.bounds,[found convertRect:found.bounds toView:overlay]),@"diagnostic overlay displays its version within visible window bounds");
+    FCheck(found!=nil && [found.titleLabel.text containsString:@"v0.2.7"] && CGRectContainsRect(overlay.bounds,[found convertRect:found.bounds toView:overlay]),@"diagnostic overlay displays its version within visible window bounds");
     FCheck(overlay.windowLevel>UIWindowLevelAlert && !overlay.isKeyWindow && !overlay.canBecomeKeyWindow,@"diagnostic overlay stays above login dialogs without stealing keyboard focus");
     FCheck([overlay hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"diagnostic overlay passes through touches outside its button");
     CGPoint center=[found convertPoint:CGPointMake(CGRectGetMidX(found.bounds),CGRectGetMidY(found.bounds)) toView:overlay];
@@ -387,8 +388,10 @@ static void TestSettingsIPMenus(void) {
     FCheck(DARAugmentSettingsSections(sections,settings).count==1,@"settings entry is not duplicated");
     UITableViewController *plugin=[[NSClassFromString(@"DARSettingsController") alloc] init];[plugin loadViewIfNeeded];
     FCheck([plugin numberOfSectionsInTableView:plugin.tableView]==5,@"plugin settings groups cover features and login diagnostics");
-    NSArray *rowCounts=@[@2,@1,@4,@2,@1];
+    NSArray *rowCounts=@[@2,@1,@4,@2,@2];
     for(NSUInteger section=0;section<5;section++)FCheck([plugin tableView:plugin.tableView numberOfRowsInSection:section]==[rowCounts[section] integerValue],@"settings includes all individual switches and audio-library entry");
+    UITableViewCell *notifications=[plugin tableView:plugin.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:4]];
+    FCheck([notifications.textLabel.text isEqual:@"消息通知修复"] && notifications.accessoryView==nil && notifications.accessoryType==UITableViewCellAccessoryDisclosureIndicator,@"notification repair is an action entry, not a feature toggle");
     UITableViewCell *option=[plugin tableView:plugin.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:1]];
     UISwitch *toggle=(UISwitch *)option.accessoryView;toggle.on=YES;[toggle sendActionsForControlEvents:UIControlEventValueChanged];
     FCheck(DAROptionEnabled(DAROptionIP),@"settings switch persists option state");
@@ -516,6 +519,7 @@ static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completi
 }
 static void RunFeatureTestsWithEntry(void(^completion)(void)) {
     FCheck(DAROptionEnabled(DAROptionManualAudioDuration),@"manual comment duration is enabled by default");
+    DARRunNotificationTests();
     TestSettingsIPMenus();
     TestLoginDiagnostics();
     DARSetOption(DAROptionManualAudioDuration,NO);
