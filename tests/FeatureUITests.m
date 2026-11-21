@@ -156,7 +156,7 @@ static void TestPhotoCaptureDates(NSData *pixels) {
     FCheck(convertedDate && fabs([convertedDate timeIntervalSinceDate:expected])<0.001,@"JPEG compatibility conversion retains original capture date and timezone");
     FeaturePhotoRequest *request=[FeaturePhotoRequest new];
     DARConfigurePhotoRequest((PHAssetCreationRequest *)request,original,capture);
-    FCheck([request.resourceOptions.uniformTypeIdentifier isEqual:@"public.jpeg"] && [@[@"jpg",@"jpeg"] containsObject:request.resourceOptions.originalFilename.pathExtension],@"Photos receives the actual JPEG type and filename extension");
+    FCheck(([request.resourceOptions.uniformTypeIdentifier isEqual:@"public.jpeg"] && [@[@"jpg",@"jpeg"] containsObject:request.resourceOptions.originalFilename.pathExtension]),@"Photos receives the actual JPEG type and filename extension");
     FCheck([request.creationDate isEqual:capture] && request.dateWrites==1 && request.resource==original && request.resourceType==PHAssetResourceTypePhoto,@"original Photos request sets capture date and keeps original bytes");
     FeaturePhotoRequest *retry=[FeaturePhotoRequest new];
     DARConfigurePhotoRequest((PHAssetCreationRequest *)retry,converted,capture);
@@ -195,7 +195,7 @@ static void TestImageSavePipeline(void(^completion)(void)) {
     NSURL *url=[NSURL URLWithString:@"https://example.test/original"],*backup=[NSURL URLWithString:@"https://example.test/backup"];
     FeatureModel *model=[FeatureModel new];model.watermarkFreeUrlList=@[url.absoluteString,url.absoluteString,@"file:///bad"];
     model.urlList=@[@"//example.test/backup"];
-    FCheck([DAROriginalImageURLs(model) isEqual:@[url,backup]],@"image candidates preserve no-watermark priority deduplicate and include backup hosts");
+    FCheck(([DAROriginalImageURLs(model) isEqual:@[url,backup]]),@"image candidates preserve no-watermark priority deduplicate and include backup hosts");
     NSURL *file=[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [plain writeToURL:file atomically:YES];
     NSHTTPURLResponse *ok=[[NSHTTPURLResponse alloc] initWithURL:url statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil];
