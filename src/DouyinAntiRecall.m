@@ -47,6 +47,17 @@ static BOOL DARRecalled(NSDictionary *ext) {
     id value = ext[@"s:is_recalled"];
     return ([value isKindOfClass:NSString.class] || [value isKindOfClass:NSNumber.class]) && [value boolValue];
 }
+static NSDictionary *DARMarkedContent(NSDictionary *content) {
+    // Append instead of prefixing so existing mention/text offsets remain valid.
+    // Non-text payloads retain their schema and media behaviour.
+    id text = content[@"text"];
+    if (![text isKindOfClass:NSString.class] || ![text length]) return content;
+    NSString *marker = @"\n【对方已撤回】";
+    if ([text hasSuffix:marker]) return content;
+    NSMutableDictionary *marked = [content mutableCopy];
+    marked[@"text"] = [text stringByAppendingString:marker];
+    return [marked copy];
+}
 static NSString *DARKey(long long account, id model) {
     id conversation = DARObject(model, @"belongingConversationIdentifier");
     id identifier = DARObject(model, @"identifier");
@@ -84,7 +95,7 @@ static id DARPrepareModel(id message, id model) {
     NSMutableDictionary *clean = [ext mutableCopy];
     [clean removeObjectsForKeys:@[@"s:is_recalled", @"s:recall_role", @"s:recall_uid"]];
     if (!DARObjectSetter(copy, @"setExtDictionary:", clean) ||
-        !DARObjectSetter(copy, @"setContentDictionary:", original)) return model;
+        !DARObjectSetter(copy, @"setContentDictionary:", DARMarkedContent(original))) return model;
     os_log_info(DARLog, "Retained incoming recalled message locally");
     return copy;
 }
