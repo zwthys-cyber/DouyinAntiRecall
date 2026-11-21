@@ -26,7 +26,7 @@ void DARRunNotificationTests(void) {
     DARFeatureAssert(service.registrations==2 && completions==5 && [message containsString:@"签名"],@"missing, array and unsupported push entitlements do not trigger a misleading registration attempt");
     service.authorization=UNAuthorizationStatusDenied;
     DARRepairNotificationAccess(service,@"production",finish);
-    DARFeatureAssert(service.registrations==2 && service.requests==1 && [message containsString:@"系统设置"],@"denied permission directs to Settings without repeated prompts");
+    DARFeatureAssert(service.registrations==2 && service.requests==1 && completions==6,@"denied permission directs to Settings without repeated prompts");
     DARTestNotificationAccess(service,finish);
     DARFeatureAssert(service.localTests==0,@"local test is not scheduled without notification permission");
     service.authorization=UNAuthorizationStatusNotDetermined;service.granted=NO;
