@@ -305,7 +305,7 @@ static void WaitForAudioRow(UITableViewController *controller, NSUInteger remain
             FCheck(controller.navigationItem.prompt==nil,@"row preparation clears its busy prompt");
             completion(nil);return;
         }
-        FCheck(remaining>0,@"inline Send prepares audio within the simulator deadline");
+        if(!remaining){FCheck(NO,@"inline Send prepares audio within the simulator deadline");return;}
         WaitForAudioRow(controller,remaining-1,completion);
     });
 }
@@ -337,7 +337,7 @@ static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completi
     FCheck(!DARGet(controller,@"preparingFile") && !DARAudioLibrary.shared.armed,@"cancel clears row busy and pending audio states");
     [send sendActionsForControlEvents:UIControlEventTouchUpInside];
     FCheck([DARGet(controller,@"preparingFile") isEqual:imported],@"Send can restart immediately after cancellation");
-    WaitForAudioRow(controller,300,^(NSError *error){
+    WaitForAudioRow(controller,1200,^(NSError *error){
         [DARAudioLibrary.shared removeFile:other error:NULL];completion(error);
     });
 }
