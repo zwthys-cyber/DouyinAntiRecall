@@ -45,7 +45,7 @@ v0.2.1 在原有消息防撤回和灰色“已撤回”标签上，加入抖音�
 
 **编译和测试只在 GitHub Actions 运行**：原有消息回归、开关回退、UIKit 布局/复用/即时刷新、设置及长按菜单、属地标签、原图链接选择、实际音频转换与评论专用的一次性替换，再检查 arm64 架构、签名和链接依赖。模拟器不发送真实评论，不访问用户账号，也不写入用户的真实相册。
 
-v0.2.0 的 [云端编译和测试已通过](https://github.com/zwthys-cyber/DouyinAntiRecall/actions/runs/44872996497)，对应源码提交 `8d8fb8b`。
+v0.2.1 的 [云端编译和测试已通过](https://github.com/zwthys-cyber/DouyinAntiRecall/actions/runs/44874229573)，对应源码提交 `3d63665`。
 
 新增功能参考用户提供的 [ac54u-mobile/Aweme](https://github.com/ac54u-mobile/Aweme)，保留 MIT 署名和许可证。见 [第三方说明](THIRD_PARTY.md)。没有合并无关功能或全局文件移动拦截。
 
