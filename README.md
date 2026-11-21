@@ -4,7 +4,7 @@
 
 产物为独立 `DouyinAntiRecall.dylib`，不依赖 Substrate 或越狱插件加载器。通过 Objective-C runtime 替换已确认的消息转换方法，在他人撤回消息时保留本机已接收内容。自己发出的消息，以及当前账号执行的群消息撤回，继续走原逻辑。
 
-**状态：静态逆向实现；GitHub Actions 负责编译及模拟回归测试，尚未完成抖音真机验证。** 云端测试通过不能证明抖音所有聊天场景均已生效。当前实现覆盖 `TIMXOMessage.applyLogicWithModel_DouYin:` 转换路径；其他 SDK、直播、电商客服、群管理员撤回及离线同步路径是否覆盖，需真机确认。
+**状态：GitHub Actions 已通过 iOS arm64 编译、签名和模拟回归测试，尚未完成抖音真机验证。** 云端测试通过不能证明抖音所有聊天场景均已生效。当前实现覆盖 `TIMXOMessage.applyLogicWithModel_DouYin:` 转换路径；其他 SDK、直播、电商客服、群管理员撤回及离线同步路径是否覆盖，需真机确认。
 
 - [安装及移除](docs/INSTALL.zh-CN.md)
 - [逆向依据和边界](docs/ANALYSIS.zh-CN.md)
@@ -12,7 +12,9 @@
 
 ## 下载
 
-进入本仓库 **Actions → Build and validate → 成功运行 → Artifacts → DouyinAntiRecall-41.2.0-arm64**，下载后解压，取得 dylib。Actions 下载需要登录有本私有仓库权限的 GitHub 账号。
+可直接在 [v0.1.0 预发布页面](https://github.com/zwthys-cyber/DouyinAntiRecall/releases/tag/v0.1.0) 下载 `DouyinAntiRecall.dylib`。
+
+[已通过的云端构建和模拟测试](https://github.com/zwthys-cyber/DouyinAntiRecall/actions/runs/44854915146/attempts/2)，对应源码提交 `fca0e88`。也可进入 **Actions → Build and validate → 成功运行 → Artifacts → DouyinAntiRecall-41.2.0-arm64** 下载 ZIP 产物。
 
 工作流在 macOS runner 中先编译运行模拟消息测试，再交叉编译 iOS arm64 动态库并检查签名和依赖。推送 main 或手动 workflow_dispatch 均可触发。不上传或运行抖音应用，不需要私有 SDK、Theos 或第三方 hook 框架。
 
