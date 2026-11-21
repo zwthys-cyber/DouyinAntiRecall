@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Test photo capture metadata with Image IO
+        run: bash tools/test-photo-metadata.sh
       - name: Run message conversion and cache regression tests
         run: bash tools/test-macos.sh
       - name: Build and verify arm64 iOS dylib

@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import "DARPhotoDate.h"
 FOUNDATION_EXPORT BOOL DARInstallFeatures(void);
 FOUNDATION_EXPORT void DAROpenSettings(UIViewController *presenter);
 FOUNDATION_EXPORT void DAROpenAudioLibrary(UIViewController *presenter);
@@ -6,7 +7,6 @@ FOUNDATION_EXPORT UIViewController *DARTopController(void);
 FOUNDATION_EXPORT void DARToast(NSString *message);
 FOUNDATION_EXPORT NSString *DARLocationForModel(id model);
 @class PHAssetCreationRequest;
-FOUNDATION_EXPORT NSDate *DARPhotoCaptureDate(NSData *data);
 FOUNDATION_EXPORT void DARConfigurePhotoRequest(PHAssetCreationRequest *creation, NSData *data, NSDate *captureDate);
 FOUNDATION_EXPORT NSData *DARPhotoCompatibleJPEG(NSData *data);
 FOUNDATION_EXPORT NSURL *DAROriginalImageURL(id imageModel);
