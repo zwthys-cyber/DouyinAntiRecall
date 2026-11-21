@@ -168,14 +168,16 @@ static void RunTests(void) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
         [[NSNotificationCenter defaultCenter] postNotificationName:DARRecallStatusDidChangeNotification
                                                           object:nil userInfo:@{@"key": backgroundKey}];
+        // Posting from this thread enqueues the UI refresh first. Enqueue the
+        // assertion after it, and return from RunTests so the main queue can run.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            Check(Badge(liveModern) && !Badge(liveModern).hidden, @"background notification refreshes UIKit on the main thread");
+            Record(@"PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode, immediate stale-model refresh and identity isolation");
+            puts("PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode, immediate stale-model refresh and identity isolation");
+            fflush(stdout);
+            exit(0);
+        });
     });
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
-    while ((Badge(liveModern) == nil || Badge(liveModern).hidden) && deadline.timeIntervalSinceNow > 0)
-        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-    Check(Badge(liveModern) && !Badge(liveModern).hidden, @"background notification refreshes UIKit on the main thread");
-    Record(@"PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode, immediate stale-model refresh and identity isolation");
-    puts("PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode, immediate stale-model refresh and identity isolation");
-    fflush(stdout);
 }
 @interface BadgeTestDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic, strong) UIWindow *window;
@@ -186,7 +188,7 @@ static void RunTests(void) {
     self.window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 393, 852)];
     self.window.rootViewController = [UIViewController new];
     [self.window makeKeyAndVisible];
-    dispatch_async(dispatch_get_main_queue(), ^{ RunTests(); exit(0); });
+    dispatch_async(dispatch_get_main_queue(), ^{ RunTests(); });
     return YES;
 }
 @end
