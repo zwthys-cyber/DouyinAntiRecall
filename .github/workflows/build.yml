@@ -15,7 +15,7 @@ jobs:
       - name: Run message conversion and cache regression tests
         run: bash tools/test-macos.sh
       - name: Test badge layout and cell reuse in iOS simulator
-        timeout-minutes: 6
+        timeout-minutes: 10
         run: bash tools/test-ui-simulator.sh
       - name: Build and verify arm64 iOS dylib
         run: bash tools/build.sh

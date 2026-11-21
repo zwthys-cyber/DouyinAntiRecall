@@ -1,8 +1,15 @@
 #import <UIKit/UIKit.h>
 #import "DARBadge.h"
 
+static void Record(NSString *status) {
+    NSString *folder = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:NULL];
+    [status writeToFile:[folder stringByAppendingPathComponent:@"badge-result.txt"]
+            atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+}
 static void Check(BOOL condition, NSString *message) {
-    if (!condition) { NSLog(@"FAIL: %@", message); exit(1); }
+    if (!condition) { Record([@"FAIL: " stringByAppendingString:message]); NSLog(@"FAIL: %@", message); exit(1); }
+    Record([@"CHECK: " stringByAppendingString:message]);
 }
 @interface BadgeMessage : NSObject
 @property(nonatomic, copy) NSDictionary *syncedExt;
@@ -100,6 +107,7 @@ static void RunTests(void) {
     [modern prepareForReuse]; Check(modernLabel.hidden, @"component reuse hides status");
     context.message = normal; [modern renderWithHolder:context]; [modern layoutIfNeeded];
     Check(modernLabel.hidden, @"component normal render clears status");
+    Record(@"PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode");
     puts("PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode");
     fflush(stdout);
 }
@@ -108,6 +116,7 @@ static void RunTests(void) {
 @end
 @implementation BadgeTestDelegate
 - (BOOL)application:(__unused UIApplication *)application didFinishLaunchingWithOptions:(__unused NSDictionary *)options {
+    Record(@"DELEGATE: test app launched");
     self.window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 393, 852)];
     self.window.rootViewController = [UIViewController new];
     [self.window makeKeyAndVisible];
@@ -116,5 +125,5 @@ static void RunTests(void) {
 }
 @end
 int main(int argc, char *argv[]) {
-    @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(BadgeTestDelegate.class)); }
+    @autoreleasepool { Record(@"START: entering UIApplicationMain"); return UIApplicationMain(argc, argv, nil, NSStringFromClass(BadgeTestDelegate.class)); }
 }

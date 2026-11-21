@@ -40,22 +40,36 @@ subprocess.run(['xcrun', 'simctl', 'bootstatus', sys.argv[1], '-b'], check=True,
 PYBOOT
 xcrun simctl install "$DEVICE_ID" "$APP_PATH"
 python3 - "$DEVICE_ID" <<'PYLAUNCH'
-import pathlib, subprocess, sys
-command = ['xcrun', 'simctl', 'launch', '--console', '--terminate-running-process',
-           sys.argv[1], 'local.douyin.badge-tests']
-process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-try:
-    output, _ = process.communicate(timeout=90)
-except subprocess.TimeoutExpired:
-    process.terminate()
-    try:
-        output, _ = process.communicate(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        output, _ = process.communicate()
-print(output)
-pathlib.Path('build/badge-ui-tests.log').write_text(output)
-# The console can stay attached after app exit, so assert the app's completion marker.
-if 'PASS: UIKit badge placement' not in output or 'FAIL:' in output:
-    raise SystemExit('UIKit badge test app did not complete successfully')
+import pathlib, subprocess, sys, time
+identifier = sys.argv[1]
+container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', identifier,
+                                     'local.douyin.badge-tests', 'data'], text=True, timeout=60).strip()
+result = pathlib.Path(container) / 'Library/Caches/badge-result.txt'
+result.unlink(missing_ok=True)
+command = ['xcrun', 'simctl', 'launch', '--terminate-running-process',
+           identifier, 'local.douyin.badge-tests']
+with open('build/badge-launch.log', 'w') as launch_log:
+    process = subprocess.Popen(command, stdout=launch_log, stderr=subprocess.STDOUT, text=True)
+    status = ''
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        current = result.read_text() if result.exists() else ''
+        if current != status:
+            status = current
+            print(status, flush=True)
+        if status.startswith(('PASS:', 'FAIL:')):
+            break
+        if process.poll() not in (None, 0):
+            break
+        time.sleep(2)
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+print(pathlib.Path('build/badge-launch.log').read_text())
+pathlib.Path('build/badge-ui-tests.log').write_text(status)
+if not status.startswith('PASS: UIKit badge placement'):
+    raise SystemExit('UIKit test app failed or timed out. Last checkpoint: ' + (status or 'not started'))
 PYLAUNCH
