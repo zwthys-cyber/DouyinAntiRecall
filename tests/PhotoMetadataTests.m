@@ -1,4 +1,7 @@
 #import "DARPhotoDate.h"
+#import "PhotoFixture.h"
+#include <stdio.h>
+#include <stdlib.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
 #include <math.h>
@@ -7,16 +10,11 @@ static NSData *Fixture(NSString *path,NSString *value) {
     CGContextRef context=CGBitmapContextCreate(NULL,8,6,8,0,color,kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(color);CGContextSetRGBFillColor(context,1,0,0,1);CGContextFillRect(context,CGRectMake(0,0,8,6));
     CGImageRef image=CGBitmapContextCreateImage(context);CGContextRelease(context);
-    CGMutableImageMetadataRef metadata=CGImageMetadataCreateMutable();
-    NSString *prefix=[path componentsSeparatedByString:@":"].firstObject;
-    NSString *space=[prefix isEqual:@"photoshop"]?@"http://ns.adobe.com/photoshop/1.0/":@"http://ns.adobe.com/exif/1.0/";
-    CGImageMetadataRegisterNamespaceForPrefix(metadata,(__bridge CFStringRef)space,(__bridge CFStringRef)prefix,NULL);
-    CGImageMetadataSetValueWithPath(metadata,NULL,(__bridge CFStringRef)path,(__bridge CFStringRef)value);
     NSMutableData *data=[NSMutableData new];
     CGImageDestinationRef destination=CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data,CFSTR("public.jpeg"),1,NULL);
-    CGImageDestinationAddImageAndMetadata(destination,image,metadata,NULL);
-    BOOL saved=CGImageDestinationFinalize(destination);CFRelease(destination);CFRelease(metadata);CGImageRelease(image);
-    if(!saved)exit(1);return data;
+    CGImageDestinationAddImage(destination,image,NULL);
+    BOOL saved=CGImageDestinationFinalize(destination);CFRelease(destination);CGImageRelease(image);
+    if(!saved)exit(1);return DARTestXMPJPEG(data,path,value);
 }
 int main(void) {
     @autoreleasepool {

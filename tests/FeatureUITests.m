@@ -1,5 +1,6 @@
 #import "DARFeatures.h"
 #import "DARImageSave.h"
+#import "PhotoFixture.h"
 #import "DAROptions.h"
 #import "DARAudio.h"
 #import "DARRuntime.h"
@@ -162,19 +163,9 @@ static NSData *OtherDateFixture(NSData *pixels,NSDictionary *iptc,NSString *path
     NSMutableData *data=[NSMutableData new];
     CGImageDestinationRef destination=CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data,CFSTR("public.jpeg"),1,NULL);
     NSDictionary *properties=iptc?@{(__bridge NSString *)kCGImagePropertyIPTCDictionary:iptc}:@{};
-    if(path) {
-        CGMutableImageMetadataRef metadata=CGImageMetadataCreateMutable();
-        NSString *prefix=[path componentsSeparatedByString:@":"].firstObject;
-        NSString *space=[prefix isEqual:@"photoshop"]?@"http://ns.adobe.com/photoshop/1.0/":([prefix isEqual:@"exif"]?@"http://ns.adobe.com/exif/1.0/":@"http://ns.adobe.com/xap/1.0/");
-        CGImageMetadataRegisterNamespaceForPrefix(metadata,(__bridge CFStringRef)space,(__bridge CFStringRef)prefix,NULL);
-        BOOL set=CGImageMetadataSetValueWithPath(metadata,NULL,(__bridge CFStringRef)path,(__bridge CFStringRef)value);
-        FCheck(set,@"XMP fixture records the requested date tag");
-        CGImageRef image=CGImageSourceCreateImageAtIndex(source,0,NULL);
-        CGImageDestinationAddImageAndMetadata(destination,image,metadata,(__bridge CFDictionaryRef)properties);
-        CGImageRelease(image);CFRelease(metadata);
-    } else CGImageDestinationAddImageFromSource(destination,source,0,(__bridge CFDictionaryRef)properties);
+    CGImageDestinationAddImageFromSource(destination,source,0,(__bridge CFDictionaryRef)properties);
     BOOL saved=CGImageDestinationFinalize(destination);CFRelease(source);CFRelease(destination);
-    FCheck(saved,@"alternate date fixture writes real image metadata");return data;
+    FCheck(saved,@"alternate date fixture writes real image metadata");return path?DARTestXMPJPEG(data,path,value):data;
 }
 static void TestOtherPhotoDates(NSData *pixels) {
     for(NSString *path in @[@"exif:DateTimeOriginal",@"photoshop:DateCreated"]) {
