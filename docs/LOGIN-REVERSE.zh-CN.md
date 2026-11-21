@@ -57,3 +57,13 @@ v0.2.6 的设备报告显示宿主匹配、诊断观察点 4/4，账户错误处
 - 对照可以登录、插件包失败：继续查注入、插件初始化与只读诊断观察是否影响宿主。
 
 对照包需要设备重新完整签名；文件打包不是安装或登录验证。仓库与公开 Release 不包含 IPA、描述文件、验证码、手机号或登录令牌。
+
+## 网传 LCSign 登录方案的进一步核对
+
+用户提供方案涉及 LCSign「移除 Embedded」、无插件、找回账号/密码验证、登录后同身份覆盖。作者频道的 v1.1-2 更新日志明确说明：该选项使签名产物不写入 `embedded.mobileprovision`。来源为官网链接的作者频道：https://t.me/s/huamidev/2100 。此前“没有找到作者说明”的信息已过时；现已找到。全能签截图中的「签名后移除描述文件」是需要核对的对应选项，但没有读取该工具实现，不能仅凭名称承诺两工具其余签名行为完全相同。
+
+原包中 `embedded.mobileprovision` 字符串位于 `0x2ce67e40`，CFString 位于 `0x35b2c558`。复核有效引用 `0x1ea4476c` 属于 `BDUGCloudkitManager.isValidMobileProvision`（入口 `0x1ea44654`），该路径拼接文件名、检查文件存在，并有 `cancel config ,release has mobileprovision.` 日志。它不是已经证实的账户登录拒绝路径，不能据此宣称移除描述文件即可消除 1049。初步扫描另外一个候选 `0x136efec8` 为跨越寄存器重写/函数边界的误匹配，已通过反汇编排除。
+
+找回账号具有独立入口：`IESAccountFindAccount.jumpToFindAccountPageWithParams:`（`0x20432e60`）可转 KMP 服务，否则准备 `account_recover` 参数并经 router 打开页面；`IESAccountFindAccountKMP.jumpToFindAccountPageWithParams:`（`0x20467c28`）转 `findAccountService.openFindAccountPageParam:useInject:`。这支持把它作为与普通短信登录不同的流程研究，但不证明其跳过何种服务器校验，也没有完成设备登录验证。
+
+无需为用户当前“官方应用已卸载”的情形添加 emoji 包标识；现有插件包标识门槛也仍为原标识。不能将适用于 40.9.0 / 41.0.0 的网传成功记录当作 41.2.0 已验证结果。若采用该方案，描述文件的省略必须作用于最终重签产物：只从待签 IPA 删除文件不能阻止签名工具重新写入。
