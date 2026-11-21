@@ -6,6 +6,9 @@
 #include <math.h>
 
 static char DARBadgeAssociation;
+static char DARLiveRecallAssociation;
+static NSHashTable<UITableViewCell *> *DARBoundCells;
+static BOOL DARRefreshingStatus;
 static void (*DAROriginalCellLayout)(id, SEL);
 static void (*DAROriginalCellReuse)(id, SEL);
 static void (*DAROriginalCellConfig)(id, SEL, id);
@@ -22,7 +25,28 @@ static id DARBadgeObject(id object, NSString *name) {
     if (strcmp(type, "@")) return nil;
     return ((id (*)(id, SEL))objc_msgSend)(object, selector);
 }
+static NSArray *DARCellMessages(id cell) {
+    id viewModel = DARBadgeObject(cell, @"viewModel");
+    id context = DARBadgeObject(cell, @"currentContext");
+    NSMutableArray *messages = [NSMutableArray new];
+    for (id candidate in @[
+        DARBadgeObject(cell, @"message") ?: NSNull.null,
+        DARBadgeObject(viewModel, @"message") ?: NSNull.null,
+        DARBadgeObject(viewModel, @"iesMessage") ?: NSNull.null,
+        DARBadgeObject(context, @"message") ?: NSNull.null,
+        DARBadgeObject(DARBadgeObject(context, @"messageViewModel"), @"message") ?: NSNull.null]) {
+        if (candidate != NSNull.null) [messages addObject:candidate];
+    }
+    return messages;
+}
+static BOOL DARCellMatchesKey(id cell, NSString *key) {
+    for (id message in DARCellMessages(cell))
+        if ([DARTrackingKeyForMessage(message) isEqualToString:key]) return YES;
+    return NO;
+}
 static BOOL DARCellHasBadge(id cell) {
+    NSString *liveKey = objc_getAssociatedObject(cell, &DARLiveRecallAssociation);
+    if (liveKey && DARCellMatchesKey(cell, liveKey)) return YES;
     if (DARHasRecallBadge(DARBadgeObject(cell, @"message"))) return YES;
     id viewModel = DARBadgeObject(cell, @"viewModel");
     if (DARHasRecallBadge(DARBadgeObject(viewModel, @"message")) ||
@@ -51,6 +75,7 @@ static UIView *DARFindBubble(UIView *host) {
     return found;
 }
 static void DARUpdateBadge(UITableViewCell *cell) {
+    [DARBoundCells addObject:cell];
     UILabel *label = objc_getAssociatedObject(cell, &DARBadgeAssociation);
     if (!DARCellHasBadge(cell)) { label.hidden = YES; return; }
     UIView *host = cell.contentView;
@@ -113,6 +138,7 @@ static void DARCellLayout(id self, SEL selector) {
     }
 }
 static void DARCellReuse(id self, SEL selector) {
+    objc_setAssociatedObject(self, &DARLiveRecallAssociation, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
     UILabel *label = objc_getAssociatedObject(self, &DARBadgeAssociation);
     label.hidden = YES;
     DAROriginalCellReuse(self, selector);
@@ -122,6 +148,7 @@ static void DARCellConfig(id self, SEL selector, id message) {
     UILabel *label = objc_getAssociatedObject(self, &DARBadgeAssociation);
     label.hidden = YES;
     DAROriginalCellConfig(self, selector, message);
+    [DARBoundCells addObject:self];
     [self setNeedsLayout];
 }
 static Method DARCellMethod(Class cls, SEL selector, NSUInteger arguments) {
@@ -168,6 +195,7 @@ static void DARModernCellLayout(id self, SEL selector) {
     }
 }
 static void DARModernCellReuse(id self, SEL selector) {
+    objc_setAssociatedObject(self, &DARLiveRecallAssociation, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
     UILabel *label = objc_getAssociatedObject(self, &DARBadgeAssociation);
     label.hidden = YES;
     DARModernReuse(self, selector);
@@ -176,6 +204,7 @@ static void DARModernCellRender(id self, SEL selector, id holder) {
     UILabel *label = objc_getAssociatedObject(self, &DARBadgeAssociation);
     label.hidden = YES;
     DARModernRender(self, selector, holder);
+    [DARBoundCells addObject:self];
     [self setNeedsLayout];
 }
 static BOOL DARInstallModernBadgeHooks(void) {
@@ -196,6 +225,34 @@ static BOOL DARInstallModernBadgeHooks(void) {
     return YES;
 }
 BOOL DARInstallBadgeHooks(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        DARBoundCells = [NSHashTable weakObjectsHashTable];
+        [[NSNotificationCenter defaultCenter] addObserverForName:DARRecallStatusDidChangeNotification
+                                                         object:nil queue:nil usingBlock:^(NSNotification *notice) {
+            void (^refresh)(void) = ^{
+                NSString *key = notice.userInfo[@"key"];
+                if (![key isKindOfClass:NSString.class] || !key.length || DARRefreshingStatus) return;
+                // Some SDK bridge getters can trigger another model conversion.
+                // A nested notice must not recursively refresh the same cells.
+                DARRefreshingStatus = YES;
+                @try {
+                    for (UITableViewCell *cell in DARBoundCells.allObjects) {
+                        @try {
+                            if (!DARCellMatchesKey(cell, key)) continue;
+                            objc_setAssociatedObject(cell, &DARLiveRecallAssociation, key, OBJC_ASSOCIATION_COPY_NONATOMIC);
+                            DARUpdateBadge(cell);
+                            [cell setNeedsLayout];
+                        } @catch (__unused NSException *exception) {
+                            // One unsupported presentation object must not abort SDK processing.
+                        }
+                    }
+                } @finally { DARRefreshingStatus = NO; }
+            };
+            if (NSThread.isMainThread) refresh();
+            else dispatch_async(dispatch_get_main_queue(), refresh);
+        }];
+    });
     BOOL legacy = DARInstallLegacyBadgeHooks();
     BOOL modern = DARInstallModernBadgeHooks();
     return legacy && modern;

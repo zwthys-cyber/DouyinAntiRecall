@@ -4,6 +4,8 @@
 
 产物为独立 `DouyinAntiRecall.dylib`，不依赖 Substrate 或越狱插件加载器。通过 Objective-C runtime 替换已确认的消息转换方法，在他人撤回消息时保留本机已接收内容。自己发出的消息，以及当前账号执行的群消息撤回，继续走原逻辑。
 
+v0.1.3 补上撤回后的即时刷新：SDK 完成消息保留后通知当前聊天单元格，按账号、会话和消息 ID 更新对应的灰色标签。即使屏幕仍持有撤回前的消息副本，也会直接显示状态；无需返回主页或重新进入对话。复用单元格时清除即时状态。
+
 v0.1.2 把撤回状态移到独立的 **10 号灰色“已撤回”标签**，消息原文保持原样。气泡下方有空间时显示在下方，否则靠右侧底部显示。标记不进入复制或转发的文字，适配深色模式。单元格复用时立即清除旧标记；空间不足时隐藏标签，避免遮挡原文。UI 使用已定位的 `AWEIMMessageBaseTableViewCell` 和组件化的 `AWEIMReusableCommonCell`；其他未走这些接口或没有可识别气泡视图的消息样式可能不显示标记。
 
 **状态：v0.1.2 已通过 GitHub 上的消息保留回归测试、iOS 模拟器 UIKit 标签测试及 iOS arm64 编译和签名检查。用户已反馈旧版防撤回在设备上生效；本版的独立标签仍需在抖音实际界面确认。** 云端测试通过不能证明抖音所有聊天场景均已生效。当前实现覆盖 `TIMXOMessage.applyLogicWithModel_DouYin:` 转换路径；其他 SDK、直播、电商客服、群管理员撤回及离线同步路径是否覆盖，需真机确认。
@@ -14,7 +16,7 @@ v0.1.2 把撤回状态移到独立的 **10 号灰色“已撤回”标签**，�
 
 ## 下载
 
-可直接在 [v0.1.2 预发布页面](https://github.com/zwthys-cyber/DouyinAntiRecall/releases/tag/v0.1.2) 下载 `DouyinAntiRecall.dylib`。
+可直接在 [v0.1.3 预发布页面](https://github.com/zwthys-cyber/DouyinAntiRecall/releases/tag/v0.1.3) 下载 `DouyinAntiRecall.dylib`。
 
 [已通过的云端构建和模拟测试](https://github.com/zwthys-cyber/DouyinAntiRecall/actions/runs/44857708219)，对应源码提交 `de9878f`。也可进入 **Actions → Build and validate → 成功运行 → Artifacts → DouyinAntiRecall-41.2.0-arm64** 下载 ZIP 产物。
 

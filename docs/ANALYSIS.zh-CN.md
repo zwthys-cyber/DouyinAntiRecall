@@ -60,3 +60,11 @@ UI 接口静态依据：AWEIMMessageBaseTableViewCell.layoutSubviews (0x22034c5c
 模拟器测试使用已观察接口的模拟聊天单元格验证 UIKit 布局及复用，不代表已经覆盖抖音所有实际单元格子类；新增标签需要真机验收。
 
 组件化聊天单元格补充接口：AWEIMReusableCommonCell.renderWithHolder: (0x21ba6e58)、prepareForReuse (0x21ba6d94)、currentContext (0x21ba7194)，上下文 AWEIMMessageComponentContext.message (0x22058028)、messageViewModel (0x22057f20)。读取上下文消息状态，在已定位的 AWEIMMessageBubbleThemeView / GradientView / AnimationBubbleView 视图族旁放置标签。仅对成功保留的消息查找视图，遍历上限 256 个视图。
+
+## v0.1.3 可见单元格主动刷新
+
+v0.1.2 仅在布局及配置时读取显示标记。收到撤回后，SDK 消息已经更新，但可见单元格可能仍持有旧 AWEIMMessage 副本，而且未发生新的布局，因此出现“返回主页再进入才显示”的现象。
+
+成功保留消息后，在原 SDK 方法完成之后发出主线程通知，携带账号/会话/消息标识。通过弱引用追踪配置过的聊天单元格，匹配其 SDK 身份后直接更新标签，并安排后续布局。AWEIMMessage 使用已观察的 transToIESMessage 接口解析身份；不改写旧展示副本内容。即时状态与完整身份绑定，prepareForReuse 清除，其他账号/会话/消息不会套用。
+
+通知接收端有重入保护，避免桥接身份 getter 触发 SDK 转换时递归刷新；未知对象或异常只影响该单元格的标签刷新，不重跑原 SDK 方法。

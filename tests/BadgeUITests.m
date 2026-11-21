@@ -11,10 +11,25 @@ static void Check(BOOL condition, NSString *message) {
     if (!condition) { Record([@"FAIL: " stringByAppendingString:message]); NSLog(@"FAIL: %@", message); exit(1); }
     Record([@"CHECK: " stringByAppendingString:message]);
 }
+@interface BadgeAccount : NSObject
+@property(nonatomic, copy) NSString *userID;
+@end
+@implementation BadgeAccount
+@end
+@interface BadgeSDKMessage : NSObject
+@property(nonatomic, strong) BadgeAccount *db;
+@property(nonatomic, copy) NSString *identifier;
+@property(nonatomic, copy) NSString *belongingConversationIdentifier;
+@end
+@implementation BadgeSDKMessage
+@end
 @interface BadgeMessage : NSObject
 @property(nonatomic, copy) NSDictionary *syncedExt;
+@property(nonatomic, strong) BadgeSDKMessage *sdk;
+- (id)transToIESMessage;
 @end
 @implementation BadgeMessage
+- (id)transToIESMessage { return self.sdk; }
 @end
 @interface BadgeViewModel : NSObject
 @property(nonatomic, strong) BadgeMessage *message;
@@ -61,6 +76,19 @@ static UILabel *Badge(UITableViewCell *cell) {
     return nil;
 }
 static void Layout(AWEIMMessageBaseTableViewCell *cell) { [cell setNeedsLayout]; [cell layoutIfNeeded]; }
+static BadgeMessage *Snapshot(NSString *account, NSString *conversation, NSString *identifier) {
+    BadgeMessage *message = [BadgeMessage new]; message.syncedExt = @{};
+    message.sdk = [BadgeSDKMessage new]; message.sdk.db = [BadgeAccount new];
+    message.sdk.db.userID = account; message.sdk.identifier = identifier;
+    message.sdk.belongingConversationIdentifier = conversation;
+    return message;
+}
+static AWEIMMessageBaseTableViewCell *LiveCell(BadgeMessage *message) {
+    AWEIMMessageBaseTableViewCell *cell = [[AWEIMMessageBaseTableViewCell alloc] initWithStyle:0 reuseIdentifier:@"live"];
+    cell.frame = CGRectMake(0, 0, 320, 84); cell.testBubbleFrame = CGRectMake(54, 8, 120, 40);
+    [cell configWithMessage:message]; Layout(cell);
+    return cell;
+}
 static void RunTests(void) {
     Check(DARInstallBadgeHooks(), @"badge hooks install");
     Check(DARInstallBadgeHooks(), @"badge hooks install once");
@@ -107,8 +135,46 @@ static void RunTests(void) {
     [modern prepareForReuse]; Check(modernLabel.hidden, @"component reuse hides status");
     context.message = normal; [modern renderWithHolder:context]; [modern layoutIfNeeded];
     Check(modernLabel.hidden, @"component normal render clears status");
-    Record(@"PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode");
-    puts("PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode");
+    BadgeMessage *stale = Snapshot(@"1001", @"conversation-live", @"message-live");
+    AWEIMMessageBaseTableViewCell *live = LiveCell(stale);
+    AWEIMMessageBaseTableViewCell *otherAccount = LiveCell(Snapshot(@"3003", @"conversation-live", @"message-live"));
+    AWEIMMessageBaseTableViewCell *otherConversation = LiveCell(Snapshot(@"1001", @"other", @"message-live"));
+    AWEIMMessageBaseTableViewCell *otherMessage = LiveCell(Snapshot(@"1001", @"conversation-live", @"other"));
+    Check(!Badge(live) || Badge(live).hidden, @"stale visible snapshot starts unmarked");
+    AWEIMReusableCommonCell *liveModern = [[AWEIMReusableCommonCell alloc] initWithStyle:0 reuseIdentifier:@"live-modern"];
+    liveModern.frame = CGRectMake(0, 0, 320, 84);
+    liveModern.bubble = [[AWEIMMessageBubbleThemeView alloc] initWithFrame:CGRectMake(54, 8, 120, 40)];
+    [liveModern.contentView addSubview:liveModern.bubble];
+    BadgeViewModel *liveContext = [BadgeViewModel new]; liveContext.message = stale;
+    [liveModern renderWithHolder:liveContext]; [liveModern layoutIfNeeded];
+    NSString *liveKey = DARTrackingKeyForMessage(stale);
+    Check(liveKey.length > 0, @"presentation snapshot resolves SDK account and identity");
+    [[NSNotificationCenter defaultCenter] postNotificationName:DARRecallStatusDidChangeNotification
+                                                      object:nil userInfo:@{@"key": liveKey}];
+    // Do not relayout, reconfigure, scroll, or re-enter the conversation here.
+    Check(Badge(live) && !Badge(live).hidden, @"legacy visible badge refreshes immediately with stale presentation data");
+    Check(Badge(liveModern) && !Badge(liveModern).hidden, @"component visible badge refreshes immediately with stale context data");
+    Check(stale.syncedExt.count == 0, @"live notification never mutates stale app snapshots");
+    Check(!Badge(otherAccount) || Badge(otherAccount).hidden, @"live refresh isolates accounts");
+    Check(!Badge(otherConversation) || Badge(otherConversation).hidden, @"live refresh isolates conversations");
+    Check(!Badge(otherMessage) || Badge(otherMessage).hidden, @"live refresh isolates message IDs");
+    Layout(live); Check(!Badge(live).hidden, @"later layouts retain live status despite stale metadata");
+    [live prepareForReuse]; [live configWithMessage:Snapshot(@"1001", @"conversation-live", @"next")]; Layout(live);
+    Check(Badge(live).hidden, @"reuse clears the live status override");
+    [liveModern prepareForReuse];
+    liveContext.message = Snapshot(@"1001", @"conversation-live", @"background");
+    [liveModern renderWithHolder:liveContext]; [liveModern layoutIfNeeded];
+    NSString *backgroundKey = DARTrackingKeyForMessage(liveContext.message);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:DARRecallStatusDidChangeNotification
+                                                          object:nil userInfo:@{@"key": backgroundKey}];
+    });
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+    while ((Badge(liveModern) == nil || Badge(liveModern).hidden) && deadline.timeIntervalSinceNow > 0)
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    Check(Badge(liveModern) && !Badge(liveModern).hidden, @"background notification refreshes UIKit on the main thread");
+    Record(@"PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode, immediate stale-model refresh and identity isolation");
+    puts("PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode, immediate stale-model refresh and identity isolation");
     fflush(stdout);
 }
 @interface BadgeTestDelegate : UIResponder <UIApplicationDelegate>

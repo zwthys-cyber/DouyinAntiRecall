@@ -62,15 +62,30 @@ int main(void) {
         Check(DARInstallForTesting(), @"repeated installation is idempotent");
         TIMXOMessage *message = [TIMXOMessage new];
         message.db = [TestStore new]; message.db.userID = @"1001";
+        __block NSUInteger notices = 0;
+        __block NSString *noticeKey;
+        __block BOOL noticeAfterOriginal = NO;
+        id statusObserver = [[NSNotificationCenter defaultCenter]
+            addObserverForName:DARRecallStatusDidChangeNotification object:nil queue:nil
+            usingBlock:^(NSNotification *notice) {
+                notices++;
+                noticeKey = notice.userInfo[@"key"];
+                noticeAfterOriginal = message.calls > 0 && DARHasRecallBadge(message) && NSThread.isMainThread;
+            }];
         NSString *identifier = NSUUID.UUID.UUIDString;
         NSDictionary *body = @{@"text": @"retained text", @"nullable": NSNull.null};
         TestModel *normal = Model(identifier, 2002, @{@"business": @"unchanged"}, body);
         [message applyLogicWithModel_DouYin:normal];
         Check(message.lastModel == normal && !message.recalled, @"normal messages forwarded unchanged");
+        Check(notices == 0, @"ordinary updates do not notify badge refresh");
         NSDictionary *recallExt = @{@"s:is_recalled": @"true", @"s:recall_uid": @"2002",
                                      @"s:recall_role": @1, @"business": @"unchanged"};
         TestModel *recall = Model(identifier, 2002, recallExt, @{});
         [message applyLogicWithModel_DouYin:recall];
+        Check(notices == 1 && noticeAfterOriginal, @"recall notifies on main after the original model update");
+        NSData *expectedData = [NSJSONSerialization dataWithJSONObject:@[@1001, @"conversation-A", identifier] options:0 error:NULL];
+        NSString *expectedKey = [[NSString alloc] initWithData:expectedData encoding:NSUTF8StringEncoding];
+        Check([noticeKey isEqual:expectedKey], @"refresh notification includes account conversation and message identity");
         NSDictionary *markedBody = body;
         Check(!message.recalled && [message.content isEqual:markedBody], @"incoming recall retains unmodified content");
         Check([normal.contentDictionary isEqual:body], @"badge never mutates the original content");
@@ -129,7 +144,8 @@ int main(void) {
         for (int i=0; i<1001; i++) [cache storeContent:@{@"text": @(i)} forKey:[NSString stringWithFormat:@"entry-%d",i]];
         Check(![cache contentForKey:@"entry-0"], @"cache evicts oldest entries");
         [[NSFileManager defaultManager] removeItemAtURL:file error:NULL];
-        puts("PASS: message conversion, ownership, isolation, immutability, persistence, cache limits");
+        [[NSNotificationCenter defaultCenter] removeObserver:statusObserver];
+        puts("PASS: message conversion, ownership, isolation, immutability, persistence, cache limits, live status notification");
     }
     return 0;
 }

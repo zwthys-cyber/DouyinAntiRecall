@@ -49,6 +49,7 @@ static BOOL DARRecalled(NSDictionary *ext) {
     return ([value isKindOfClass:NSString.class] || [value isKindOfClass:NSNumber.class]) && [value boolValue];
 }
 NSString *const DARRecallStatusKey = @"dar_retained_recall_v2";
+NSNotificationName const DARRecallStatusDidChangeNotification = @"local.douyin.antirecall.status-changed";
 BOOL DARHasRecallBadge(id message) {
     id ext = DARObject(message, @"syncedExt");
     if (![ext isKindOfClass:NSDictionary.class]) return NO;
@@ -64,6 +65,15 @@ static NSString *DARKey(long long account, id model) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:@[@(account), conversation, identifier]
                                                   options:0 error:NULL];
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+NSString *DARTrackingKeyForMessage(id message) {
+    long long account = DARAccountID(message);
+    if (account > 0) return DARKey(account, message);
+    // The visible AWE message can be an older presentation snapshot. Resolve its
+    // SDK counterpart for identity only; do not overwrite its text or metadata.
+    id sdk = DARObject(message, @"transToIESMessage");
+    account = DARAccountID(sdk);
+    return account > 0 ? DARKey(account, sdk) : nil;
 }
 static id DARPrepareModel(id message, id model) {
     long long account = DARAccountID(message);
@@ -103,8 +113,17 @@ static void DARApply(id self, SEL command, id model) {
     @catch (__unused NSException *exception) {
         os_log_error(DARLog, "Message preparation failed; forwarding original model");
     }
+    NSString *key = prepared != model ? DARKey(DARAccountID(self), model) : nil;
     // Never catch and retry the original: it may already have emitted notifications.
     DAROriginalApply(self, command, prepared);
+    if (key) {
+        void (^notify)(void) = ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:DARRecallStatusDidChangeNotification
+                                                              object:nil userInfo:@{@"key": key}];
+        };
+        if (NSThread.isMainThread) notify();
+        else dispatch_async(dispatch_get_main_queue(), notify);
+    }
 }
 static BOOL DARInstall(void) {
     if (DAROriginalApply) return YES;
