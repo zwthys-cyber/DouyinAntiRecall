@@ -6,9 +6,10 @@
 #import <objc/message.h>
 static NSURL *DARHTTPURL(id value) {
     NSURL *url=[value isKindOfClass:NSURL.class]?value:([value isKindOfClass:NSString.class]?[NSURL URLWithString:value]:nil);
-    return [@[@"http",@"https"] containsObject:url.scheme.lowercaseString]?url:nil;
+    return url.scheme.length && [@[@"http",@"https"] containsObject:url.scheme.lowercaseString]?url:nil;
 }
 static NSURL *DARFirstURL(id values) {
+    if(!values)return nil;
     if([values isKindOfClass:NSArray.class]) {
         for(id value in values){NSURL *url=DARHTTPURL(value);if(url)return url;}
         return nil;

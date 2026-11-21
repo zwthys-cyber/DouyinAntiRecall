@@ -11,9 +11,9 @@
 static NSError *DARError(NSString *message) { return [NSError errorWithDomain:@"DouyinAudio" code:1 userInfo:@{NSLocalizedDescriptionKey:message}]; }
 NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
     NSDictionary *types=@{@"audio/mpeg":@"mp3",@"audio/mp3":@"mp3",@"audio/mp4":@"m4a",@"audio/x-m4a":@"m4a",@"audio/aac":@"aac",@"audio/wav":@"wav",@"audio/x-wav":@"wav",@"audio/flac":@"flac",@"audio/x-flac":@"flac",@"audio/ogg":@"ogg",@"video/mp4":@"mp4"};
-    NSString *known=types[MIMEType.lowercaseString];if(known)return known;
+    NSString *known=[MIMEType isKindOfClass:NSString.class]?types[MIMEType.lowercaseString]:nil;if(known)return known;
     NSString *ext=url.pathExtension.lowercaseString;
-    return [@[@"mp3",@"m4a",@"aac",@"wav",@"caf",@"aiff",@"aif",@"flac",@"ogg",@"mp4"] containsObject:ext]?ext:@"m4a";
+    return ext.length && [@[@"mp3",@"m4a",@"aac",@"wav",@"caf",@"aiff",@"aif",@"flac",@"ogg",@"mp4"] containsObject:ext]?ext:@"m4a";
 }
 @implementation DARAudioLibrary {
     NSURL *_directory, *_pending;
@@ -56,6 +56,7 @@ NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
     return [files sortedArrayUsingComparator:^NSComparisonResult(NSURL *a,NSURL *b){ return [a.lastPathComponent localizedStandardCompare:b.lastPathComponent]; }];
 }
 - (NSURL *)importFile:(NSURL *)source name:(NSString *)name error:(NSError **)error {
+    if(!source.isFileURL){if(error)*error=DARError(@"请选择本地音频文件");return nil;}
     NSNumber *size; [source getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
     AVURLAsset *asset=[AVURLAsset URLAssetWithURL:source options:nil];
     if(!source.isFileURL || !size || size.unsignedLongLongValue>50*1024*1024 || ![asset tracksWithMediaType:AVMediaTypeAudio].count) {

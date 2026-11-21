@@ -143,6 +143,7 @@ static void TestSettingsIPMenus(void) {
     FCheck([AWEPlayInteractionTimestampElement shouldActiveWithData:nil context:nil],@"IP option activates timestamp element");
     FeatureModel *image=[FeatureModel new];image.watermarkFreeUrlList=@[@"https://example.test/original.jpg"];image.urlList=@[@"https://example.test/display.jpg"];
     FCheck([DAROriginalImageURL(image).absoluteString isEqual:@"https://example.test/original.jpg"],@"original-image selector prefers watermarkFreeUrlList");
+    FCheck(!DAROriginalImageURL([FeatureModel new]),@"missing image URLs safely produce no download action target");
     image.watermarkFreeUrlList=@[@"file:///unwanted"];
     FCheck([DAROriginalImageURL(image).absoluteString isEqual:@"https://example.test/display.jpg"],@"image URL fallback accepts only HTTP and HTTPS");
     UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];format.scale=1;
@@ -178,6 +179,7 @@ static NSURL *AudioFixture(NSURL *directory) {
 }
 void DARRunFeatureTests(void(^completion)(void)) {
     TestSettingsIPMenus();
+    FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.MP3"],nil) isEqual:@"mp3"],@"missing Content-Type falls back to the source audio extension");
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/audio?token=123"],@"audio/mpeg") isEqual:@"mp3"],@"downloaded MP3 retains its format even when the URL has no extension");
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.WAV?token=123"],@"application/octet-stream") isEqual:@"wav"],@"audio extension fallback ignores query tokens and normalizes case");
     FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.bin"],@"video/mp4") isEqual:@"mp4"],@"video audio fallback keeps a compatible container extension");
