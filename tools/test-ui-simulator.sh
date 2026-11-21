@@ -34,9 +34,28 @@ raise SystemExit('No available iOS simulator on this GitHub runner')
 PY
 )"
 xcrun simctl boot "$DEVICE_ID" || true
-xcrun simctl bootstatus "$DEVICE_ID" -b
+python3 - "$DEVICE_ID" <<'PYBOOT'
+import subprocess, sys
+subprocess.run(['xcrun', 'simctl', 'bootstatus', sys.argv[1], '-b'], check=True, timeout=180)
+PYBOOT
 xcrun simctl install "$DEVICE_ID" "$APP_PATH"
-xcrun simctl launch --console --terminate-running-process "$DEVICE_ID" local.douyin.badge-tests \
-  | tee build/badge-ui-tests.log
-# simctl may return success even if the app exits with an assertion failure.
-rg -q 'PASS: UIKit badge placement' build/badge-ui-tests.log
+python3 - "$DEVICE_ID" <<'PYLAUNCH'
+import pathlib, subprocess, sys
+command = ['xcrun', 'simctl', 'launch', '--console', '--terminate-running-process',
+           sys.argv[1], 'local.douyin.badge-tests']
+process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+try:
+    output, _ = process.communicate(timeout=90)
+except subprocess.TimeoutExpired:
+    process.terminate()
+    try:
+        output, _ = process.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        output, _ = process.communicate()
+print(output)
+pathlib.Path('build/badge-ui-tests.log').write_text(output)
+# The console can stay attached after app exit, so assert the app's completion marker.
+if 'PASS: UIKit badge placement' not in output or 'FAIL:' in output:
+    raise SystemExit('UIKit badge test app did not complete successfully')
+PYLAUNCH

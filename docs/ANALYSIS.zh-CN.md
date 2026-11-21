@@ -58,3 +58,5 @@ UI 接口静态依据：AWEIMMessageBaseTableViewCell.layoutSubviews (0x22034c5c
 在布局完成后将一个 UILabel 放入单元格 contentView，字号 10，系统 secondaryLabelColor。优先使用气泡下方空位，次选右侧；空间不足时隐藏，避免覆盖文字或相邻单元格。prepareForReuse 和 configWithMessage: 会立即隐藏旧标签。没有修改行高，不写入服务器或应用的原模型。
 
 模拟器测试使用已观察接口的模拟聊天单元格验证 UIKit 布局及复用，不代表已经覆盖抖音所有实际单元格子类；新增标签需要真机验收。
+
+组件化聊天单元格补充接口：AWEIMReusableCommonCell.renderWithHolder: (0x21ba6e58)、prepareForReuse (0x21ba6d94)、currentContext (0x21ba7194)，上下文 AWEIMMessageComponentContext.message (0x22058028)、messageViewModel (0x22057f20)。读取上下文消息状态，在已定位的 AWEIMMessageBubbleThemeView / GradientView / AnimationBubbleView 视图族旁放置标签。仅对成功保留的消息查找视图，遍历上限 256 个视图。

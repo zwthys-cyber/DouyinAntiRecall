@@ -36,6 +36,18 @@ static void Check(BOOL condition, NSString *message) {
 - (UIView *)visibleContentView { return self.bubble; }
 - (UIView *)containerView { return self.bubble; }
 @end
+@interface AWEIMMessageBubbleThemeView : UIView
+@end
+@implementation AWEIMMessageBubbleThemeView
+@end
+@interface AWEIMReusableCommonCell : UITableViewCell
+@property(nonatomic, strong) BadgeViewModel *currentContext;
+@property(nonatomic, strong) UIView *bubble;
+- (void)renderWithHolder:(id)holder;
+@end
+@implementation AWEIMReusableCommonCell
+- (void)renderWithHolder:(id)holder { self.currentContext = holder; }
+@end
 static UILabel *Badge(UITableViewCell *cell) {
     for (UIView *view in cell.contentView.subviews)
         if ([view.accessibilityIdentifier isEqual:@"DouyinAntiRecall.status"]) return (UILabel *)view;
@@ -76,6 +88,18 @@ static void RunTests(void) {
     cell.bubble.hidden = NO;
     cell.overrideUserInterfaceStyle = UIUserInterfaceStyleDark; Layout(cell);
     Check(!label.hidden && [label.textColor isEqual:UIColor.secondaryLabelColor], @"dynamic secondary color supports dark mode");
+    AWEIMReusableCommonCell *modern = [[AWEIMReusableCommonCell alloc] initWithStyle:0 reuseIdentifier:@"modern"];
+    modern.frame = CGRectMake(0, 0, 320, 84);
+    modern.bubble = [[AWEIMMessageBubbleThemeView alloc] initWithFrame:CGRectMake(54, 8, 120, 40)];
+    [modern.contentView addSubview:modern.bubble];
+    BadgeViewModel *context = [BadgeViewModel new]; context.message = recalled;
+    [modern renderWithHolder:context]; [modern layoutIfNeeded];
+    UILabel *modernLabel = Badge(modern);
+    Check(modernLabel && !modernLabel.hidden, @"component cell reads currentContext and discovers known bubble view");
+    Check(!CGRectIntersectsRect(modernLabel.frame, modern.bubble.frame), @"component badge never overlaps bubble");
+    [modern prepareForReuse]; Check(modernLabel.hidden, @"component reuse hides status");
+    context.message = normal; [modern renderWithHolder:context]; [modern layoutIfNeeded];
+    Check(modernLabel.hidden, @"component normal render clears status");
     puts("PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode");
     fflush(stdout);
 }

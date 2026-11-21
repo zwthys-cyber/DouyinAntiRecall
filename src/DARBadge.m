@@ -9,6 +9,9 @@ static char DARBadgeAssociation;
 static void (*DAROriginalCellLayout)(id, SEL);
 static void (*DAROriginalCellReuse)(id, SEL);
 static void (*DAROriginalCellConfig)(id, SEL, id);
+static void (*DARModernLayout)(id, SEL);
+static void (*DARModernReuse)(id, SEL);
+static void (*DARModernRender)(id, SEL, id);
 
 static id DARBadgeObject(id object, NSString *name) {
     SEL selector = NSSelectorFromString(name);
@@ -22,8 +25,30 @@ static id DARBadgeObject(id object, NSString *name) {
 static BOOL DARCellHasBadge(id cell) {
     if (DARHasRecallBadge(DARBadgeObject(cell, @"message"))) return YES;
     id viewModel = DARBadgeObject(cell, @"viewModel");
-    return DARHasRecallBadge(DARBadgeObject(viewModel, @"message")) ||
-           DARHasRecallBadge(DARBadgeObject(viewModel, @"iesMessage"));
+    if (DARHasRecallBadge(DARBadgeObject(viewModel, @"message")) ||
+        DARHasRecallBadge(DARBadgeObject(viewModel, @"iesMessage"))) return YES;
+    id context = DARBadgeObject(cell, @"currentContext");
+    if (DARHasRecallBadge(DARBadgeObject(context, @"message"))) return YES;
+    return DARHasRecallBadge(DARBadgeObject(DARBadgeObject(context, @"messageViewModel"), @"message"));
+}
+static UIView *DARFindBubble(UIView *host) {
+    // Component cells expose their message through currentContext rather than message.
+    // Only use known bubble view families; never guess from arbitrary labels or avatars.
+    NSMutableArray<UIView *> *pending = [host.subviews mutableCopy];
+    UIView *found = nil;
+    NSUInteger visited = 0;
+    while (pending.count && visited++ < 256) {
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        if (view.hidden || view.alpha < 0.01) continue;
+        NSString *name = NSStringFromClass(view.class);
+        if ([name hasPrefix:@"AWEIMMessageBubble"] || [name isEqualToString:@"AWEIMMessageAnimationBubbleView"]) {
+            if (!found || view.bounds.size.width * view.bounds.size.height > found.bounds.size.width * found.bounds.size.height)
+                found = view;
+        }
+        [pending addObjectsFromArray:view.subviews];
+    }
+    return found;
 }
 static void DARUpdateBadge(UITableViewCell *cell) {
     UILabel *label = objc_getAssociatedObject(cell, &DARBadgeAssociation);
@@ -32,6 +57,8 @@ static void DARUpdateBadge(UITableViewCell *cell) {
     id candidate = DARBadgeObject(cell, @"visibleContentView");
     if (![candidate isKindOfClass:UIView.class] || candidate == cell || candidate == host)
         candidate = DARBadgeObject(cell, @"containerView");
+    UIView *knownBubble = DARFindBubble(host);
+    if (knownBubble) candidate = knownBubble;
     if (![candidate isKindOfClass:UIView.class] || candidate == cell || candidate == host ||
         ![candidate isDescendantOfView:host] || [candidate isHidden]) {
         label.hidden = YES;
@@ -113,7 +140,7 @@ static void DARReplaceCellMethod(Class cls, SEL selector, Method method, IMP rep
     if (!class_addMethod(cls, selector, replacement, method_getTypeEncoding(method)))
         method_setImplementation(method, replacement);
 }
-BOOL DARInstallBadgeHooks(void) {
+static BOOL DARInstallLegacyBadgeHooks(void) {
     if (DAROriginalCellLayout) return YES;
     Class cls = objc_getClass("AWEIMMessageBaseTableViewCell");
     if (!cls || ![cls isSubclassOfClass:UITableViewCell.class]) return NO;
@@ -130,4 +157,46 @@ BOOL DARInstallBadgeHooks(void) {
     DARReplaceCellMethod(cls, reuse, reuseMethod, (IMP)DARCellReuse);
     DARReplaceCellMethod(cls, config, configMethod, (IMP)DARCellConfig);
     return YES;
+}
+
+static void DARModernCellLayout(id self, SEL selector) {
+    DARModernLayout(self, selector);
+    @try { DARUpdateBadge(self); }
+    @catch (__unused NSException *exception) {
+        UILabel *label = objc_getAssociatedObject(self, &DARBadgeAssociation);
+        label.hidden = YES;
+    }
+}
+static void DARModernCellReuse(id self, SEL selector) {
+    UILabel *label = objc_getAssociatedObject(self, &DARBadgeAssociation);
+    label.hidden = YES;
+    DARModernReuse(self, selector);
+}
+static void DARModernCellRender(id self, SEL selector, id holder) {
+    UILabel *label = objc_getAssociatedObject(self, &DARBadgeAssociation);
+    label.hidden = YES;
+    DARModernRender(self, selector, holder);
+    [self setNeedsLayout];
+}
+static BOOL DARInstallModernBadgeHooks(void) {
+    if (DARModernLayout) return YES;
+    Class cls = objc_getClass("AWEIMReusableCommonCell");
+    if (!cls || ![cls isSubclassOfClass:UITableViewCell.class]) return NO;
+    SEL layout = @selector(layoutSubviews), reuse = @selector(prepareForReuse);
+    SEL render = NSSelectorFromString(@"renderWithHolder:");
+    Method lm = DARCellMethod(cls, layout, 2), rm = DARCellMethod(cls, reuse, 2);
+    Method cm = DARCellMethod(cls, render, 3);
+    if (!lm || !rm || !cm) return NO;
+    DARModernLayout = (void (*)(id, SEL))method_getImplementation(lm);
+    DARModernReuse = (void (*)(id, SEL))method_getImplementation(rm);
+    DARModernRender = (void (*)(id, SEL, id))method_getImplementation(cm);
+    DARReplaceCellMethod(cls, layout, lm, (IMP)DARModernCellLayout);
+    DARReplaceCellMethod(cls, reuse, rm, (IMP)DARModernCellReuse);
+    DARReplaceCellMethod(cls, render, cm, (IMP)DARModernCellRender);
+    return YES;
+}
+BOOL DARInstallBadgeHooks(void) {
+    BOOL legacy = DARInstallLegacyBadgeHooks();
+    BOOL modern = DARInstallModernBadgeHooks();
+    return legacy && modern;
 }
