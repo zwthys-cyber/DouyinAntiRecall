@@ -580,7 +580,7 @@ static void RunFeatureTestsWithEntry(void(^completion)(void)) {
                     FCheck(cancelledError && !library.armed,@"disabling during transcoding cannot rearm audio later");
                     [library removeFile:imported error:NULL];[NSFileManager.defaultManager removeItemAtURL:temporary error:NULL];
                     for(NSString *key in @[DAROptionIP,DAROptionAudioLibrary,DAROptionCommentAudio,DAROptionImages])DARSetOption(key,NO);
-                    TestManualAudioDuration(^{TestImageSavePipeline(^{TestLoginDiagnosticsButton();completion();});});
+                    TestManualAudioDuration(^{TestImageSavePipeline(^{FCheck(FindLoginDiagnosticsButton()==nil,@"diagnostic overlay stays absent throughout app interactions");completion();});});
                 }];
                 DARSetOption(DAROptionCommentAudio,NO);
             }];
