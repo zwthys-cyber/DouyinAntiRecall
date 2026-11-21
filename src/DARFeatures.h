@@ -5,6 +5,7 @@ FOUNDATION_EXPORT void DAROpenAudioLibrary(UIViewController *presenter);
 FOUNDATION_EXPORT UIViewController *DARTopController(void);
 FOUNDATION_EXPORT void DARToast(NSString *message);
 FOUNDATION_EXPORT NSString *DARLocationForModel(id model);
+FOUNDATION_EXPORT NSData *DARPhotoCompatibleJPEG(NSData *data);
 FOUNDATION_EXPORT NSURL *DAROriginalImageURL(id imageModel);
 FOUNDATION_EXPORT NSArray *DARAugmentLongPressGroups(NSArray *groups, id model, BOOL modern);
 FOUNDATION_EXPORT NSArray *DARAugmentSettingsSections(NSArray *sections, id viewModel);

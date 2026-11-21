@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
+FOUNDATION_EXPORT NSString *DARAudioExtensionForDownload(NSURL *url, NSString *MIMEType);
 @interface DARAudioLibrary : NSObject
 + (instancetype)shared;
 - (instancetype)initWithDirectory:(NSURL *)directory;

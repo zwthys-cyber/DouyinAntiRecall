@@ -74,6 +74,7 @@ extern void DARFeatureAssert(BOOL,NSString *);
 @interface FeatureRecorder : NSObject
 @property(strong)NSURL *url;
 @property double currentTime;
+@property BOOL hasCancelled;
 @end
 @implementation FeatureRecorder
 @end
@@ -144,6 +145,13 @@ static void TestSettingsIPMenus(void) {
     FCheck([DAROriginalImageURL(image).absoluteString isEqual:@"https://example.test/original.jpg"],@"original-image selector prefers watermarkFreeUrlList");
     image.watermarkFreeUrlList=@[@"file:///unwanted"];
     FCheck([DAROriginalImageURL(image).absoluteString isEqual:@"https://example.test/display.jpg"],@"image URL fallback accepts only HTTP and HTTPS");
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];format.scale=1;
+    UIImage *small=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(12,7) format:format] imageWithActions:^(UIGraphicsImageRendererContext *context){
+        CGContextSetFillColorWithColor(context.CGContext,UIColor.blueColor.CGColor);CGContextFillRect(context.CGContext,CGRectMake(0,0,12,7));
+    }];
+    NSData *jpeg=DARPhotoCompatibleJPEG(UIImagePNGRepresentation(small));UIImage *compatible=[UIImage imageWithData:jpeg];
+    FCheck(jpeg.length && CGImageGetWidth(compatible.CGImage)==12 && CGImageGetHeight(compatible.CGImage)==7,@"photo format fallback retains full pixel dimensions");
+    FCheck(!DARPhotoCompatibleJPEG([@"invalid" dataUsingEncoding:NSUTF8StringEncoding]),@"invalid image data never produces a fake saved photo");
     model.albumImages=@[image,image];model.currentImageIndex=2;
     AWELongPressPanelViewGroupModel *nativeGroup=[AWELongPressPanelViewGroupModel new];nativeGroup.groupArr=@[];
     NSArray *original=@[nativeGroup];
@@ -170,6 +178,9 @@ static NSURL *AudioFixture(NSURL *directory) {
 }
 void DARRunFeatureTests(void(^completion)(void)) {
     TestSettingsIPMenus();
+    FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/audio?token=123"],@"audio/mpeg") isEqual:@"mp3"],@"downloaded MP3 retains its format even when the URL has no extension");
+    FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.WAV?token=123"],@"application/octet-stream") isEqual:@"wav"],@"audio extension fallback ignores query tokens and normalizes case");
+    FCheck([DARAudioExtensionForDownload([NSURL URLWithString:@"https://example.test/a.bin"],@"video/mp4") isEqual:@"mp4"],@"video audio fallback keeps a compatible container extension");
     NSURL *temporary=[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:temporary withIntermediateDirectories:YES attributes:nil error:NULL];
     NSURL *fixture=AudioFixture(temporary);NSError *error;
@@ -200,9 +211,16 @@ void DARRunFeatureTests(void(^completion)(void)) {
             FCheck(!secondError,@"audio can be rearmed for another explicit send");
             [controller audioRecorderDidFinishRecording:recorder success:NO error:nil];
             FCheck(library.armed,@"failed or cancelled recording does not consume pending audio");
+            recorder.hasCancelled=YES;
+            [controller audioRecorderDidFinishRecording:recorder success:YES error:nil];
+            FCheck(library.armed,@"explicit recorder cancellation preserves pending audio even if success is true");
+            recorder.hasCancelled=NO;
             AWECommentAudioUploadManager *uploader=[AWECommentAudioUploadManager new];
             [uploader startUploadAudioWithFilePath:recording.path];
-            FCheck(uploader.calls==1 && ![uploader.observedData isEqual:before] && !library.armed,@"comment-specific upload fallback replaces and consumes once");
+            FCheck(library.armed && [uploader.observedData isEqual:before],@"an old delayed upload cannot consume a newly armed selection");
+            [before writeToURL:recording atomically:YES];
+            [uploader startUploadAudioWithFilePath:recording.path];
+            FCheck(uploader.calls==2 && ![uploader.observedData isEqual:before] && !library.armed,@"comment-specific upload fallback replaces and consumes once");
             [library prepareFile:imported completion:^(NSError *modernError){
                 FCheck(!modernError,@"modern comment upload can prepare audio");
                 [before writeToURL:recording atomically:YES];

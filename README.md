@@ -1,43 +1,50 @@
-# DouyinAntiRecall
+# DouyinAntiRecall · 抖音增强
 
-抖音 **41.2.0 / 412021** 的实验性本地消息防撤回插件，目标环境为 **iOS 17.0 + TrollStore + TrollFools**。
+适配 **抖音 41.2.0（412021）/ iOS 17.0 + TrollStore**，通过 TrollFools 注入独立 `DouyinAntiRecall.dylib`。插件不依赖 Substrate、Theos 或额外动态库。
 
-产物为独立 `DouyinAntiRecall.dylib`，不依赖 Substrate 或越狱插件加载器。通过 Objective-C runtime 替换已确认的消息转换方法，在他人撤回消息时保留本机已接收内容。自己发出的消息，以及当前账号执行的群消息撤回，继续走原逻辑。
+v0.2.0 在原有消息防撤回和灰色“已撤回”标签上，加入抖音设置入口、IP 属地、音频库/评论区发送音频、图文原图保存。新增功能的真实抖音界面和发送/相册结果需要设备验收；云端使用与静态接口对应的模拟对象测试。
 
-v0.1.3 补上撤回后的即时刷新：SDK 完成消息保留后通知当前聊天单元格，按账号、会话和消息 ID 更新对应的灰色标签。即使屏幕仍持有撤回前的消息副本，也会直接显示状态；无需返回主页或重新进入对话。复用单元格时清除即时状态。
+## 安装与设置
 
-v0.1.2 把撤回状态移到独立的 **10 号灰色“已撤回”标签**，消息原文保持原样。气泡下方有空间时显示在下方，否则靠右侧底部显示。标记不进入复制或转发的文字，适配深色模式。单元格复用时立即清除旧标记；空间不足时隐藏标签，避免遮挡原文。UI 使用已定位的 `AWEIMMessageBaseTableViewCell` 和组件化的 `AWEIMReusableCommonCell`；其他未走这些接口或没有可识别气泡视图的消息样式可能不显示标记。
+从 [Releases](https://github.com/zwthys-cyber/DouyinAntiRecall/releases) 下载最新版。退出抖音，用 TrollFools 移除旧 dylib，再注入新版，重新打开抖音。已有缓存可以保留。
 
-**状态：v0.1.3 已通过 GitHub 上的消息保留与状态通知回归、iOS 模拟器即时刷新/身份隔离/后台通知测试，以及 iOS arm64 编译和签名检查。真实抖音中的刷新时机仍需安装后验收。** 云端测试通过不能证明抖音所有聊天场景均已生效。当前实现覆盖 `TIMXOMessage.applyLogicWithModel_DouYin:` 转换路径；其他 SDK、直播、电商客服、群管理员撤回及离线同步路径是否覆盖，需真机确认。
+进入 **抖音 → 设置 → 抖音增强**。各项均有独立开关：
 
-- [安装及移除](docs/INSTALL.zh-CN.md)
-- [逆向依据和边界](docs/ANALYSIS.zh-CN.md)
-- [验证范围及手机验收步骤](docs/VALIDATION.zh-CN.md)
+| 开关 | 默认 | 作用 |
+| --- | --- | --- |
+| 消息防撤回 | 开 | 保留本机收到的他人消息 |
+| 显示已撤回标记 | 开 | 气泡旁的小号灰色标签，支持即时刷新 |
+| 显示 IP 属地 | 关 | 视频时间旁显示平台提供的属地或省市 |
+| 视频音频入库 | 关 | 长按视频将音乐保存到音频库 |
+| 评论区发送库内音频 | 关 | 选择文件后替换下一次评论语音 |
+| 无水印保存图片 | 关 | 长按图文保存当前原图或整组图片 |
 
-## 下载
+“IP”指 IP 属地，不是网络地址。使用本机离线城市码表和平台数据，无额外位置查询账号。
 
-可直接在 [v0.1.3 预发布页面](https://github.com/zwthys-cyber/DouyinAntiRecall/releases/tag/v0.1.3) 下载 `DouyinAntiRecall.dylib`。
+## 音频和原图
 
-[已通过的云端构建和模拟测试](https://github.com/zwthys-cyber/DouyinAntiRecall/actions/runs/44859326638)，对应源码提交 `3e05fd9`。也可进入 **Actions → Build and validate → 成功运行 → Artifacts → DouyinAntiRecall-41.2.0-arm64** 下载 ZIP 产物。
+音频库可以从插件设置直接打开，支持文件导入、试听、删除。开启音频入库后，视频长按菜单会出现“音频入库”和“音频库”。
 
-工作流在 macOS runner 中先编译运行模拟消息测试，再交叉编译 iOS arm64 动态库并检查签名和依赖。推送 main 或手动 workflow_dispatch 均可触发。新增 UIKit 标签的 iOS 模拟器布局与复用测试。不上传或运行抖音应用，不需要私有 SDK、Theos 或第三方 hook 框架。
+在音频库选择 **用于下一条评论语音**，准备完成后回评论区，使用原生语音按钮录约 1 秒再松开，发送已选音频。每次准备仅使用一次、5 分钟内有效，最多截取前 29.5 秒。关闭开关、手动取消或重启会清除待发状态。此功能需要账号本来就有评论语音按钮。
 
-## 本地缓存
+开启原图开关后，长按图文可选择“保存当前原图”或“保存整组原图”。优先使用 `watermarkFreeUrlList`，需要允许添加相册。下载服务端原图，不抹除已经烙在像素中的水印；不被相册支持的格式会尝试原分辨率 JPEG 兜底。本版不包含无水印视频下载或实况视频导出。
 
-已观察到的他人消息 JSON 内容保存在抖音自己的沙盒：
+详见 [功能说明](docs/FEATURES.zh-CN.md)、[安装说明](docs/INSTALL.zh-CN.md) 和 [验收步骤](docs/VALIDATION.zh-CN.md)。
 
-`Library/Application Support/DouyinAntiRecall/messages.json`
+## 消息保留和数据
 
-按当前账号、会话、消息标识分隔；最多 1000 条、内容总计约 8 MiB、单条不超过 64 KiB。写入有约 2 秒延迟。缓存不会上传，目录排除 iCloud 备份，iOS 文件使用首次解锁后的数据保护。消息内容以 JSON 存在本机，不额外加密。卸载插件不会自动删除缓存；可在停止抖音后用具备沙盒访问能力的工具删除该目录。设备强制结束进程可能丢失最近未刷盘内容。
+原文保持不变，撤回状态作为独立的 10 号灰色标签。优先放气泡下方，空间紧时靠右下侧；无空位时隐藏以避免覆盖文字。按账号、会话、消息身份主动刷新，复用单元格时清理状态。自己发送或当前账号执行的撤回继续走原逻辑。
 
-不能凭空恢复未收到的消息，也不能保证恢复已被服务器删除的图片、视频、语音附件。插件不会阻止服务器撤回，也不会让其他设备恢复显示。若插件未观察到原文且更新模型中也无原文，会保留原应用的撤回状态。
+消息缓存位于 `Library/Application Support/DouyinAntiRecall/messages.json`，最多 1000 条、内容约 8 MiB、单条 64 KiB。缓存按账号/会话隔离，不上传，排除 iCloud 备份，首次解锁后可读取。关闭开关或移除插件不会删除缓存。
 
-## 开发
+音频库位于 `Documents/DouyinAudioLibrary/`，单个文件不超过 50 MB；音频准备文件只用于本机下一次评论发送。删除文件或停用功能会取消相关待发状态。消息/音频数据均在抖音自己的沙盒中。
 
-- `src/DouyinAntiRecall.m`：版本检查、ABI 检查、接收消息转换 hook。
-- `src/DARCache.m`：有界本机 JSON 缓存。
-- `tests/MessageHookTests.m`：GitHub macOS runner 使用模拟消息对象测试实际 hook 源码。
-- `tools/objc_dump.py`：只读取 Mach-O 的静态 ObjC 元数据提取脚本，不加载目标二进制。
-- `.github/workflows/build.yml`：云端测试和构建。
+不能恢复未收到的消息或服务器已经删除的媒体附件。历史保留依赖已有缓存或更新模型仍提供的原文。
 
-仓库只包含原创插件代码和必要的接口分析摘要，不包含抖音 IPA、AwemeCore、聊天记录或用户凭据。
+## 构建、验证与来源
+
+**编译和测试只在 GitHub Actions 运行**：原有消息回归、开关回退、UIKit 布局/复用/即时刷新、设置及长按菜单、属地标签、原图链接选择、实际音频转换与评论专用的一次性替换，再检查 arm64 架构、签名和链接依赖。模拟器不发送真实评论，不访问用户账号，也不写入用户的真实相册。
+
+新增功能参考用户提供的 [ac54u-mobile/Aweme](https://github.com/ac54u-mobile/Aweme)，保留 MIT 署名和许可证。见 [第三方说明](THIRD_PARTY.md)。没有合并无关功能或全局文件移动拦截。
+
+仓库不包含抖音 IPA、AwemeCore、聊天记录、用户音频或用户凭据。静态接口依据见 [逆向说明](docs/ANALYSIS.zh-CN.md)。

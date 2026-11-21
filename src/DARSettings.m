@@ -60,11 +60,19 @@ void DARToast(NSString *message) {
     picker.delegate=self; picker.allowsMultipleSelection=YES; [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)documentPicker:(__unused UIDocumentPickerViewController *)picker didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    for(NSURL *url in urls) {
-        BOOL access=[url startAccessingSecurityScopedResource]; NSError *error;
-        [DARAudioLibrary.shared importFile:url name:url.lastPathComponent error:&error];
-        if(access)[url stopAccessingSecurityScopedResource]; if(error)DARToast(error.localizedDescription);
-    } [self reload];
+    self.navigationItem.prompt=@"正在导入音频…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+        NSMutableArray *errors=[NSMutableArray new];
+        for(NSURL *url in urls) {
+            BOOL access=[url startAccessingSecurityScopedResource];NSError *error;
+            [DARAudioLibrary.shared importFile:url name:url.lastPathComponent error:&error];
+            if(access)[url stopAccessingSecurityScopedResource];if(error)[errors addObject:error.localizedDescription];
+        }
+        dispatch_async(dispatch_get_main_queue(),^{
+            self.navigationItem.prompt=nil;[self reload];
+            DARToast(errors.count?errors.firstObject:@"音频已导入");
+        });
+    });
 }
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(__unused NSInteger)section { return self.files.count; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(__unused NSInteger)section {
@@ -90,6 +98,7 @@ void DARToast(NSString *message) {
         [DARAudioLibrary.shared prepareFile:file completion:^(NSError *error){
             self.navigationItem.prompt=nil; [self reload];
             if(error){DARToast(error.localizedDescription);return;}
+            if(!self.view.window){DARToast(@"下一条评论音频已准备");return;}
             UIAlertController *ready=[UIAlertController alertControllerWithTitle:@"音频已准备" message:@"返回评论区，录制约 1 秒后松开，即可发送这段音频。仅替换下一次评论语音，5 分钟内有效。" preferredStyle:UIAlertControllerStyleAlert];
             [ready addAction:[UIAlertAction actionWithTitle:@"完成" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){[self close];}]];
             [self presentViewController:ready animated:YES completion:nil];

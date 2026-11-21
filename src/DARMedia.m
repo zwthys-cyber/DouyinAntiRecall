@@ -21,6 +21,10 @@ NSURL *DAROriginalImageURL(id imageModel) {
     NSURL *url=DARFirstURL(DARGet(imageModel,@"watermarkFreeUrlList"));
     return url?:DARFirstURL(DARGet(imageModel,@"urlList"));
 }
+NSData *DARPhotoCompatibleJPEG(NSData *data) {
+    UIImage *image=[UIImage imageWithData:data];
+    return image?UIImageJPEGRepresentation(image,0.98):nil;
+}
 @interface DARImageSaveTask : NSObject
 @property(nonatomic,strong) NSArray<NSURL *> *urls;
 @property(nonatomic) NSUInteger index;
@@ -39,7 +43,16 @@ NSURL *DAROriginalImageURL(id imageModel) {
             PHAssetCreationRequest *creation=[PHAssetCreationRequest creationRequestForAsset];
             [creation addResourceWithType:PHAssetResourceTypePhoto data:data options:nil];
         } completionHandler:^(BOOL success,__unused NSError *saveError){
-            dispatch_async(dispatch_get_main_queue(),^{if(success)self.successes++;[self next];});
+            if(success){dispatch_async(dispatch_get_main_queue(),^{self.successes++;[self next];});return;}
+            // Some CDN formats render in UIKit but are not accepted by Photos.
+            // Keep the original bytes when possible; retry at full resolution as JPEG.
+            NSData *jpeg=DARPhotoCompatibleJPEG(data);
+            if(!jpeg){dispatch_async(dispatch_get_main_queue(),^{[self next];});return;}
+            [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+                [[PHAssetCreationRequest creationRequestForAsset] addResourceWithType:PHAssetResourceTypePhoto data:jpeg options:nil];
+            } completionHandler:^(BOOL retried,__unused NSError *retryError){
+                dispatch_async(dispatch_get_main_queue(),^{if(retried)self.successes++;[self next];});
+            }];
         }];
     }] resume];
 }

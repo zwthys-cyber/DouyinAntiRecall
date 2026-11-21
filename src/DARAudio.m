@@ -9,9 +9,17 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 static NSError *DARError(NSString *message) { return [NSError errorWithDomain:@"DouyinAudio" code:1 userInfo:@{NSLocalizedDescriptionKey:message}]; }
+NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
+    NSDictionary *types=@{@"audio/mpeg":@"mp3",@"audio/mp3":@"mp3",@"audio/mp4":@"m4a",@"audio/x-m4a":@"m4a",@"audio/aac":@"aac",@"audio/wav":@"wav",@"audio/x-wav":@"wav",@"audio/flac":@"flac",@"audio/x-flac":@"flac",@"audio/ogg":@"ogg",@"video/mp4":@"mp4"};
+    NSString *known=types[MIMEType.lowercaseString];if(known)return known;
+    NSString *ext=url.pathExtension.lowercaseString;
+    return [@[@"mp3",@"m4a",@"aac",@"wav",@"caf",@"aiff",@"aif",@"flac",@"ogg",@"mp4"] containsObject:ext]?ext:@"m4a";
+}
 @implementation DARAudioLibrary {
     NSURL *_directory, *_pending;
-    NSDate *_expires;
+    NSDate *_expires, *_armedAt;
+    NSURL *_pendingSource;
+    NSMutableDictionary *_replacedFiles;
     NSTimeInterval _duration;
     NSUInteger _generation;
     id _optionObserver;
@@ -26,6 +34,7 @@ static NSError *DARError(NSString *message) { return [NSError errorWithDomain:@"
 - (instancetype)initWithDirectory:(NSURL *)directory {
     if((self=[super init])) {
         _directory=directory;
+        _replacedFiles=[NSMutableDictionary new];
         [NSFileManager.defaultManager removeItemAtURL:[directory URLByAppendingPathComponent:@"Prepared" isDirectory:YES] error:NULL];
         [NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:NULL];
         __weak typeof(self) weak=self;
@@ -65,6 +74,7 @@ static NSError *DARError(NSString *message) { return [NSError errorWithDomain:@"
 }
 - (BOOL)removeFile:(NSURL *)file error:(NSError **)error {
     if(![self contains:file]) { if(error)*error=DARError(@"文件不在音频库中"); return NO; }
+    @synchronized(self) { if([file.URLByResolvingSymlinksInPath.path isEqual:_pendingSource.URLByResolvingSymlinksInPath.path])[self cancelPending]; }
     return [NSFileManager.defaultManager removeItemAtURL:file error:error];
 }
 - (void)download:(NSURL *)source name:(NSString *)name completion:(void(^)(NSError *))completion {
@@ -72,18 +82,29 @@ static NSError *DARError(NSString *message) { return [NSError errorWithDomain:@"
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:source]; request.timeoutInterval=45;
     [[NSURLSession.sharedSession downloadTaskWithRequest:request completionHandler:^(NSURL *file,NSURLResponse *response,NSError *error){
         if(!error && (![(NSHTTPURLResponse *)response isKindOfClass:NSHTTPURLResponse.class] || [(NSHTTPURLResponse *)response statusCode]!=200))error=DARError(@"音频下载失败");
-        if(!error) { NSError *saveError; [self importFile:file name:name error:&saveError]; error=saveError; }
+        if(!error) {
+            NSNumber *size;[file getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
+            if(!size || size.unsignedLongLongValue>50*1024*1024)error=DARError(@"音频超过 50 MB，未入库");
+            else {
+                NSString *ext=DARAudioExtensionForDownload(source,response.MIMEType);
+                NSURL *staged=[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:ext]];
+                NSError *saveError;
+                if([NSFileManager.defaultManager copyItemAtURL:file toURL:staged error:&saveError])
+                    [self importFile:staged name:name error:&saveError];
+                [NSFileManager.defaultManager removeItemAtURL:staged error:NULL];error=saveError;
+            }
+        }
         dispatch_async(dispatch_get_main_queue(),^{ completion(error); });
     }] resume];
 }
 - (BOOL)armed { @synchronized(self) { return _pending && _expires.timeIntervalSinceNow>0 && DAROptionEnabled(DAROptionCommentAudio); } }
 - (NSTimeInterval)preparedDuration { @synchronized(self) { return _duration; } }
 - (void)cancelPending {
-    @synchronized(self) { _generation++; if(_pending)[NSFileManager.defaultManager removeItemAtURL:_pending error:NULL]; _pending=nil; _expires=nil; _duration=0; }
+    @synchronized(self) { _generation++; if(_pending)[NSFileManager.defaultManager removeItemAtURL:_pending error:NULL]; _pending=nil; _pendingSource=nil; _expires=nil; _armedAt=nil; _duration=0; }
 }
 - (void)prepareFile:(NSURL *)file completion:(void(^)(NSError *))completion {
     if(!DAROptionEnabled(DAROptionCommentAudio) || ![self contains:file]) { completion(DARError(@"请先开启评论音频发送，并选择音频库中的文件")); return; }
-    [self cancelPending]; __block NSUInteger generation; @synchronized(self){generation=_generation;}
+    [self cancelPending]; __block NSUInteger generation; @synchronized(self){generation=_generation;_pendingSource=file;}
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         AVURLAsset *asset=[AVURLAsset URLAssetWithURL:file options:nil];
         NSTimeInterval duration=MIN(29.5,CMTimeGetSeconds(asset.duration));
@@ -99,7 +120,7 @@ static NSError *DARError(NSString *message) { return [NSError errorWithDomain:@"
             NSError *error=session.status==AVAssetExportSessionStatusCompleted?nil:(session.error?:DARError(@"音频转换失败"));
             @synchronized(self) {
                 if(generation!=self->_generation || !DAROptionEnabled(DAROptionCommentAudio))error=DARError(@"已取消待发送音频");
-                if(!error) { self->_pending=output; self->_duration=duration; self->_expires=[NSDate dateWithTimeIntervalSinceNow:300]; }
+                if(!error) { self->_pending=output; self->_duration=duration; self->_armedAt=[NSDate date]; self->_expires=[NSDate dateWithTimeIntervalSinceNow:300]; }
                 else [NSFileManager.defaultManager removeItemAtURL:output error:NULL];
             }
             dispatch_async(dispatch_get_main_queue(),^{completion(error);});
@@ -115,15 +136,27 @@ static NSError *DARError(NSString *message) { return [NSError errorWithDomain:@"
         if(!recording.isFileURL || ![path hasPrefix:[home stringByAppendingString:@"/"]] ||
            [self contains:recording] || !regular.boolValue ||
            ![@[@"aac",@"m4a",@"caf",@"wav",@"mp3"] containsObject:path.pathExtension.lowercaseString])return NO;
+        NSDictionary *attributes=[NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL];
+        NSDate *modified=attributes[NSFileModificationDate];
+        // A delayed upload of an older comment must not consume a newly armed sound.
+        if(!modified || [modified compare:_armedAt]==NSOrderedAscending)return NO;
+        NSDictionary *fingerprint=@{@"inode":attributes[NSFileSystemFileNumber]?:NSNull.null,
+                                    @"modified":modified,@"size":attributes[NSFileSize]?:NSNull.null};
+        if([_replacedFiles[path] isEqual:fingerprint])return NO;
         NSData *data=[NSData dataWithContentsOfURL:_pending options:NSDataReadingMappedIfSafe error:error];
         if(!data.length || ![data writeToURL:recording options:NSDataWritingAtomic error:error])return NO;
+        NSDictionary *updated=[NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL];
+        _replacedFiles[path]=@{@"inode":updated[NSFileSystemFileNumber]?:NSNull.null,
+                              @"modified":updated[NSFileModificationDate]?:NSNull.null,
+                              @"size":updated[NSFileSize]?:NSNull.null};
+        if(_replacedFiles.count>64)[_replacedFiles removeObjectForKey:_replacedFiles.allKeys.firstObject];
         [self cancelPending]; return YES;
     }
 }
 @end
 static IMP DAROriginalCommentFinish, DAROriginalCommentUpload, DAROriginalModernCommentUploader;
 static void DARCommentFinish(id self,SEL selector,id recorder,BOOL success,id error) {
-    if(success && !error && DAROptionEnabled(DAROptionCommentAudio)) {
+    if(success && !error && !DARNumber(recorder,@"hasCancelled") && DAROptionEnabled(DAROptionCommentAudio)) {
         DARAudioLibrary *library=DARAudioLibrary.shared; NSTimeInterval duration=library.preparedDuration;
         NSURL *url=DARGet(recorder,@"url");
         if([url isKindOfClass:NSURL.class] && [library replaceCommentRecording:url error:NULL])DARPutNumber(recorder,@"setCurrentTime:",duration);
