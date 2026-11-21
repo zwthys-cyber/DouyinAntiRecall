@@ -96,10 +96,11 @@ void DARTestNotificationAccess(id<DARNotificationService> service,void (^complet
     NSBundle *bundle=NSBundle.mainBundle;NSDictionary *attributes=[NSFileManager.defaultManager attributesOfItemAtPath:bundle.executablePath error:NULL];
     NSData *data=[attributes[NSFileSize] unsignedLongLongValue]<=16*1024*1024?[NSData dataWithContentsOfFile:bundle.executablePath]:nil;
     self.environment=DARDiagnosticEntitlements(data)[@"aps-environment"];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:UIApplicationDidBecomeActiveNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(didBecomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
     [self refresh];
 }
 - (void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];}
+- (void)didBecomeActive:(__unused NSNotification *)notice {[self refresh];}
 - (void)close {[self dismissViewControllerAnimated:YES completion:nil];}
 - (void)refresh {
     __weak typeof(self) weak=self;
@@ -125,9 +126,9 @@ void DARTestNotificationAccess(id<DARNotificationService> service,void (^complet
     [tableView deselectRowAtIndexPath:path animated:YES];if(path.section!=1)return;
     __weak typeof(self) weak=self;
     switch(path.row) {
-        case 0:DARRepairNotificationAccess(self.service,self.environment,^(NSString *result){[weak showResult:result];});break;
+        case 0:{DARRepairNotificationAccess(self.service,self.environment,^(NSString *result){[weak showResult:result];});break;}
         case 1:[self refresh];break;
-        case 2:DARTestNotificationAccess(self.service,^(NSString *result){[weak showResult:result];});break;
+        case 2:{DARTestNotificationAccess(self.service,^(NSString *result){[weak showResult:result];});break;}
         case 3:{
             NSString *url=UIApplicationOpenSettingsURLString;
             if(@available(iOS 15.4,*))url=UIApplicationOpenNotificationSettingsURLString;
