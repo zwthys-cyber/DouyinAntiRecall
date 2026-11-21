@@ -105,7 +105,7 @@ static UIButton *FindLoginDiagnosticsButton(void) {
 static void TestLoginDiagnosticsButton(void) {
     UIButton *found=FindLoginDiagnosticsButton();UIWindow *overlay=found.window;
     [overlay layoutIfNeeded];
-    FCheck(found!=nil && [found.titleLabel.text containsString:@"v0.2.8"] && CGRectContainsRect(overlay.bounds,[found convertRect:found.bounds toView:overlay]),@"diagnostic overlay displays its version within visible window bounds");
+    FCheck(found!=nil && [found.titleLabel.text containsString:@"v0.2.9"] && CGRectContainsRect(overlay.bounds,[found convertRect:found.bounds toView:overlay]),@"diagnostic overlay displays its version within visible window bounds");
     FCheck(overlay.windowLevel>UIWindowLevelAlert && !overlay.isKeyWindow && !overlay.canBecomeKeyWindow,@"diagnostic overlay stays above login dialogs without stealing keyboard focus");
     FCheck([overlay hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"diagnostic overlay passes through touches outside its button");
     CGPoint center=[found convertPoint:CGPointMake(CGRectGetMidX(found.bounds),CGRectGetMidY(found.bounds)) toView:overlay];

@@ -1,6 +1,6 @@
 #import "DARPushBinding.h"
 extern void DARFeatureAssert(BOOL,NSString *);
-static NSInteger RegisteredOriginalCalls,FailedOriginalCalls,UploadStartOriginalCalls,UploadResultOriginalCalls;
+static NSInteger HostRegisteredOriginalCalls,RegisteredOriginalCalls,FailedOriginalCalls,UploadStartOriginalCalls,UploadResultOriginalCalls;
 static id ObservedApplication,ObservedToken,ObservedError,ObservedStartPayload,ObservedResultPayload;
 static NSMutableArray *ServiceCalls;
 @interface BDUGPushDelegateInjection : NSObject
@@ -10,6 +10,16 @@ static NSMutableArray *ServiceCalls;
 @implementation BDUGPushDelegateInjection
 - (void)application:(id)application didRegisterForRemoteNotificationsWithDeviceToken:(id)token {RegisteredOriginalCalls++;ObservedApplication=application;ObservedToken=token;}
 - (void)application:(id)application didFailToRegisterForRemoteNotificationsWithError:(id)error {FailedOriginalCalls++;ObservedApplication=application;ObservedError=error;}
+@end
+@interface HTSBootAppDelegate : NSObject
+- (void)application:(id)application didRegisterForRemoteNotificationsWithDeviceToken:(id)token;
+@end
+@implementation HTSBootAppDelegate
+- (void)application:(id)application didRegisterForRemoteNotificationsWithDeviceToken:(id)token {
+    HostRegisteredOriginalCalls++;ObservedApplication=application;ObservedToken=token;
+    // Model the host forwarding the same registration into the SDK path.
+    [[BDUGPushDelegateInjection new] application:application didRegisterForRemoteNotificationsWithDeviceToken:token];
+}
 @end
 @interface AWEPushModule : NSObject
 - (void)bdug_pushDeviceTokenUploadStart:(id)payload;
@@ -33,14 +43,19 @@ void DARRunPushBindingTests(void) {
     id application=[NSObject new];NSData *token=[@"PRIVATE-DEVICE-TOKEN" dataUsingEncoding:NSUTF8StringEncoding];
     NSError *error=[NSError errorWithDomain:@"System.Test" code:3000 userInfo:@{NSLocalizedDescriptionKey:@"PRIVATE-ERROR-PHONE"}];
     NSDictionary *payload=@{@"token":@"PRIVATE-TOKEN",@"uid":@"PRIVATE-UID",@"success":@YES};
+    HTSBootAppDelegate *host=[HTSBootAppDelegate new];
+    [host application:application didRegisterForRemoteNotificationsWithDeviceToken:token];
+    DARFeatureAssert(HostRegisteredOriginalCalls==1 && RegisteredOriginalCalls==1 && ObservedApplication==application && ObservedToken==token,@"host callback forwards objects once and preserves nested SDK forwarding");
+    NSString *hostReport=DARPushBindingReport();
+    DARFeatureAssert([hostReport containsString:@"AppDelegate 注册成功回调：1"] && [hostReport containsString:@"SDK 注册成功回调：1"] && [hostReport containsString:@"不能相加"],@"nested paths remain separate observations rather than duplicate registrations");
     [injection application:application didRegisterForRemoteNotificationsWithDeviceToken:token];
-    DARFeatureAssert(RegisteredOriginalCalls==1 && ObservedApplication==application && ObservedToken==token,@"registration observer forwards the original application and token exactly once");
+    DARFeatureAssert(RegisteredOriginalCalls==2 && ObservedApplication==application && ObservedToken==token,@"registration observer forwards the original application and token exactly once");
     [injection application:application didFailToRegisterForRemoteNotificationsWithError:error];
     DARFeatureAssert(FailedOriginalCalls==1 && ObservedError==error,@"registration failure preserves the native error object");
     [module bdug_pushDeviceTokenUploadStart:payload];[module bdug_pushDeviceTokenUploadResult:payload];
     DARFeatureAssert(UploadStartOriginalCalls==1 && UploadResultOriginalCalls==1 && ObservedStartPayload==payload && ObservedResultPayload==payload,@"upload observers preserve payloads and invoke original methods exactly once");
     NSString *report=DARPushBindingReport();
-    DARFeatureAssert([report containsString:@"4/4"] && [report containsString:@"3000"] && [report containsString:@"结果回调：1"],@"binding report distinguishes callback stages and numeric registration failure");
+    DARFeatureAssert([report containsString:@"5/5"] && [report containsString:@"3000"] && [report containsString:@"结果回调：1"],@"binding report distinguishes callback stages and numeric registration failure");
     DARFeatureAssert(![report containsString:@"PRIVATE"] && ![report containsString:@"success"] && [report containsString:@"不等于服务端接受"],@"report excludes tokens, account data and callback payload fields and does not imply delivery");
     ServiceCalls=[NSMutableArray new];
     DARFeatureAssert(DARRetryHostPushBinding() && [ServiceCalls isEqual:@[@"request",@"upload"]],@"explicit retry requests a native token then invokes host upload-if-needed, without changing rate limits");

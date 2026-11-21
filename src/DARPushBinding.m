@@ -3,8 +3,8 @@
 #import <objc/message.h>
 #include <string.h>
 
-static IMP DARPushRegisteredOriginal,DARPushFailedOriginal,DARPushUploadStartOriginal,DARPushUploadResultOriginal;
-static NSUInteger DARPushRegisteredCount,DARPushFailureCount,DARPushUploadStartCount,DARPushUploadResultCount;
+static IMP DARPushHostRegisteredOriginal,DARPushRegisteredOriginal,DARPushFailedOriginal,DARPushUploadStartOriginal,DARPushUploadResultOriginal;
+static NSUInteger DARPushHostRegisteredCount,DARPushRegisteredCount,DARPushFailureCount,DARPushUploadStartCount,DARPushUploadResultCount;
 static NSInteger DARPushFailureCode;
 static BOOL DARPushHasFailureCode;
 static NSString *DARPushLastStage;
@@ -12,6 +12,10 @@ static NSObject *DARPushLock(void) {static NSObject *lock;static dispatch_once_t
 static void DARPushRegistered(id self,SEL command,id application,id token) {
     @synchronized(DARPushLock()){DARPushRegisteredCount++;DARPushLastStage=@"宿主收到系统注册成功回调";}
     ((void(*)(id,SEL,id,id))DARPushRegisteredOriginal)(self,command,application,token);
+}
+static void DARPushHostRegistered(id self,SEL command,id application,id token) {
+    @synchronized(DARPushLock()){DARPushHostRegisteredCount++;DARPushLastStage=@"宿主 AppDelegate 收到系统注册成功回调";}
+    ((void(*)(id,SEL,id,id))DARPushHostRegisteredOriginal)(self,command,application,token);
 }
 static void DARPushFailed(id self,SEL command,id application,id error) {
     @synchronized(DARPushLock()) {
@@ -46,7 +50,8 @@ BOOL DARInstallPushBindingObservers(void) {
     BOOL b=DARHook(injection,@"application:didFailToRegisterForRemoteNotificationsWithError:",(IMP)DARPushFailed,&DARPushFailedOriginal,"v",4);
     BOOL c=DARHook(module,@"bdug_pushDeviceTokenUploadStart:",(IMP)DARPushUploadStart,&DARPushUploadStartOriginal,"v",3);
     BOOL d=DARHook(module,@"bdug_pushDeviceTokenUploadResult:",(IMP)DARPushUploadResult,&DARPushUploadResultOriginal,"v",3);
-    return a&&b&&c&&d;
+    BOOL e=DARHook(NSClassFromString(@"HTSBootAppDelegate"),@"application:didRegisterForRemoteNotificationsWithDeviceToken:",(IMP)DARPushHostRegistered,&DARPushHostRegisteredOriginal,"v",4);
+    return a&&b&&c&&d&&e;
 }
 static BOOL DARPushCanCall(id receiver,NSString *name) {
     Method method=class_getInstanceMethod(object_getClass(receiver),NSSelectorFromString(name));
@@ -65,9 +70,9 @@ BOOL DARRetryHostPushBinding(void) {
     return YES;
 }
 NSString *DARPushBindingReport(void) {
-    NSUInteger observers=(DARPushRegisteredOriginal!=NULL)+(DARPushFailedOriginal!=NULL)+(DARPushUploadStartOriginal!=NULL)+(DARPushUploadResultOriginal!=NULL);
+    NSUInteger observers=(DARPushRegisteredOriginal!=NULL)+(DARPushFailedOriginal!=NULL)+(DARPushUploadStartOriginal!=NULL)+(DARPushUploadResultOriginal!=NULL)+(DARPushHostRegisteredOriginal!=NULL);
     @synchronized(DARPushLock()) {
-        return [NSString stringWithFormat:@"宿主绑定观察点：%lu/4\n本次进程注册成功回调：%lu · 失败：%lu%@\n绑定上传开始：%lu · 结果回调：%lu\n最近阶段：%@\n计数从本次加载开始；0 不代表此前从未绑定。结果回调不等于服务端接受或推送送达。",(unsigned long)observers,(unsigned long)DARPushRegisteredCount,(unsigned long)DARPushFailureCount,
-            DARPushHasFailureCode?[NSString stringWithFormat:@"（系统错误码 %ld）",(long)DARPushFailureCode]:@"",(unsigned long)DARPushUploadStartCount,(unsigned long)DARPushUploadResultCount,DARPushLastStage?:@"尚未观察到宿主回调"];
+        return [NSString stringWithFormat:@"宿主绑定观察点：%lu/5\n本次进程 SDK 注册成功回调：%lu · 失败：%lu%@\n宿主 AppDelegate 注册成功回调：%lu\n绑定上传开始：%lu · 结果回调：%lu\n最近阶段：%@\n计数从本次加载开始；0 不代表此前从未绑定或注册失败。两条成功路径可能属于同一次注册，不能相加作为注册次数。结果回调不等于服务端接受或推送送达。",(unsigned long)observers,(unsigned long)DARPushRegisteredCount,(unsigned long)DARPushFailureCount,
+            DARPushHasFailureCode?[NSString stringWithFormat:@"（系统错误码 %ld）",(long)DARPushFailureCode]:@"",(unsigned long)DARPushHostRegisteredCount,(unsigned long)DARPushUploadStartCount,(unsigned long)DARPushUploadResultCount,DARPushLastStage?:@"尚未观察到宿主回调"];
     }
 }

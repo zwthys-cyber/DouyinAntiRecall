@@ -36,3 +36,10 @@ WQ 检查器旧版将 `BDUGPushVersionCodeKey` 标成“缓存宿主版本”，
 宿主另有 `HTSBootAppDelegate.application:didRegisterForRemoteNotificationsWithDeviceToken:`（`0x203a2070`）路径，保存通知上下文并通知模块中心。现有四个观察点未直接覆盖该方法；全部计数为零不能证明系统从未回调。尚无动态证据确定当前设备走了哪条路径。
 
 Apple 的 [APS Environment 文档](https://developer.apple.com/documentation/bundleresources/entitlements/aps-environment)说明注册使用的环境由 entitlement 指定，并通常随描述文件配置；[APNs 连接文档](https://developer.apple.com/documentation/usernotifications/establishing-a-connection-to-apns)区分开发与生产端点，[提供方证书文档](https://developer.apple.com/documentation/usernotifications/establishing-a-certificate-based-connection-to-apns)要求证书绑定特定 App ID。目前的 `development` 和重签身份是待核对条件，未取得抖音服务端投递响应，不能直接宣称其为唯一根因，也不能用客户端改字符串替代签名授权或提供方配置。
+
+
+## v0.2.9 补充宿主注册回调
+
+依据上文已核对的 `HTSBootAppDelegate.application:didRegisterForRemoteNotificationsWithDeviceToken:`，增加独立观察点。安装仍严格限制 41.2.0 / 412021；原始 application、token 对象原样调用原实现一次，不检查 token 内容。保留 SDK 原观察点，并将两条成功路径分别计数；若宿主转发到 SDK，两次观察不能解释为两次系统注册。缺少新类或方法时保留已安装的观察点，报告按实际安装数量显示，不阻断系统注册和宿主按需上传。
+
+新增云端回归模拟宿主转发到 SDK 的嵌套调用，检查两层原实现各调用一次、对象身份保持、重复安装不重复 hook，以及报告不含敏感数据。本版没有改变投递身份或修复 APNs 服务端配置，不能据此报告通知恢复。
