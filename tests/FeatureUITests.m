@@ -198,8 +198,10 @@ void DARRunFeatureTests(void(^completion)(void)) {
         FCheck(!prepareError && library.armed,@"audio is transcoded and armed only after explicit selection");
         FCheck(library.preparedDuration>1.9 && library.preparedDuration<2.1,@"prepared audio preserves actual duration");
         NSURL *recording=[temporary URLByAppendingPathComponent:@"comment.m4a"];
-        [NSFileManager.defaultManager copyItemAtURL:fixture toURL:recording error:NULL];
-        NSData *before=[NSData dataWithContentsOfURL:recording];
+        // A new recording writes fresh data. copyItem preserves the fixture's old
+        // modification time and correctly belongs to the delayed-upload case.
+        NSData *before=[NSData dataWithContentsOfURL:fixture];
+        [before writeToURL:recording atomically:YES];
         FeatureRecorder *recorder=[FeatureRecorder new];recorder.url=recording;recorder.currentTime=1;
         AWECommentAudioRecorderController *controller=[AWECommentAudioRecorderController new];
         [controller audioRecorderDidFinishRecording:recorder success:YES error:nil];
