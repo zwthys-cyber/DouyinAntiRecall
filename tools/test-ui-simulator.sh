@@ -7,7 +7,7 @@ SDK_PATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 # GitHub's standard macOS image is Apple Silicon; match its simulator architecture.
 xcrun --sdk iphonesimulator clang -target "$(uname -m)-apple-ios17.0-simulator" \
   -isysroot "$SDK_PATH" -fobjc-arc -fblocks -DDAR_TESTING=1 -Isrc \
-  -Wall -Wextra -Werror -framework Foundation -framework UIKit \
+  -Wall -Wextra -Werror -framework Foundation -framework UIKit -framework CoreGraphics \
   src/DouyinAntiRecall.m src/DARCache.m src/DARBadge.m tests/BadgeUITests.m \
   -o "$APP_PATH/DARBadgeTests"
 /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string local.douyin.badge-tests' "$APP_PATH/Info.plist"
