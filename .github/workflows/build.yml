@@ -1,0 +1,32 @@
+name: Build and validate
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run message conversion and cache regression tests
+        run: bash tools/test-macos.sh
+      - name: Build and verify arm64 iOS dylib
+        run: bash tools/build.sh
+      - name: Prepare installable plugin package
+        run: |
+          cp docs/INSTALL.zh-CN.md build/安装说明.txt
+          cp docs/VALIDATION.zh-CN.md build/验证状态.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DouyinAntiRecall-41.2.0-arm64
+          path: |
+            build/DouyinAntiRecall.dylib
+            build/SHA256SUMS
+            build/安装说明.txt
+            build/验证状态.txt
+          if-no-files-found: error
+          retention-days: 30

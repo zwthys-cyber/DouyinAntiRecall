@@ -1,0 +1,29 @@
+抖音防撤回插件安装说明（实验版）
+
+目标：抖音 41.2.0（412021），原始包标识 com.ss.iphone.ugc.Aweme；iOS 17.0。
+版本或构建号不同会自动不启用，不能直接用于其他抖音版本。
+
+1. 在 GitHub 仓库的 Actions 成功运行页面，下载 DouyinAntiRecall-41.2.0-arm64 产物。
+2. 解压，找到 DouyinAntiRecall.dylib。可用 SHA256SUMS 对照校验文件。
+3. 在设备上用 TrollStore 安装自己已有的 41.2.0 解密安装包。
+   原始 ZIP 若顶层为 Payload，可保留 ZIP 原件，复制一份改名 .ipa 后交给 TrollStore。
+   本仓库不提供或上传抖音安装包。
+4. 完全退出抖音。在 TrollFools 选择这个抖音，导入 DouyinAntiRecall.dylib 并完成注入。
+5. 重新打开抖音，用另一个账号发送文字消息；先让接收端收到并打开聊天，随后在发送端撤回。
+6. 对照验证文档检查文字是否保留、重启后是否仍显示，以及自己发送的消息是否仍可撤回。
+
+这是动态库，需要注入应用才能加载；只在文件管理器打开 dylib 不会启用。
+插件不带设置界面，成功加载且版本吻合后自动生效。
+
+移除：退出抖音，在 TrollFools 中移除此动态库，重新打开抖音。
+如果出现启动异常，先在 TrollFools 移除注入，再恢复使用。
+
+缓存目录：抖音沙盒 Library/Application Support/DouyinAntiRecall/
+有沙盒访问权限时，可在停止抖音后删除该目录清除插件消息缓存。
+移除动态库不会自动清除缓存。
+
+安装方式参考：
+https://github.com/Lessica/TrollFools/blob/main/README.md
+https://github.com/opa334/TrollStore
+
+云端编译和模拟测试不能替代抖音真机验收。
