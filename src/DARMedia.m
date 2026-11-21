@@ -1,9 +1,11 @@
 #import "DARFeatures.h"
+#import "DARImageSave.h"
 #import "DARAudio.h"
 #import "DAROptions.h"
 #import "DARRuntime.h"
 #import <Photos/Photos.h>
 #import <ImageIO/ImageIO.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/message.h>
 static NSURL *DARHTTPURL(id value) {
     NSURL *url=[value isKindOfClass:NSURL.class]?value:([value isKindOfClass:NSString.class]?[NSURL URLWithString:value]:nil);
@@ -19,10 +21,24 @@ static NSURL *DARFirstURL(id values) {
     id list=DARGet(values,@"originURLList");
     return [list isKindOfClass:NSArray.class]?DARFirstURL(list):nil;
 }
-NSURL *DAROriginalImageURL(id imageModel) {
-    NSURL *url=DARFirstURL(DARGet(imageModel,@"watermarkFreeUrlList"));
-    return url?:DARFirstURL(DARGet(imageModel,@"urlList"));
+static void DARCollectImageURLs(id values,NSMutableArray<NSURL *> *urls,NSUInteger depth) {
+    if(!values || depth>4 || urls.count>=16)return;
+    if([values isKindOfClass:NSArray.class]) {
+        for(id value in values)DARCollectImageURLs(value,urls,depth+1);
+    } else {
+        if([values isKindOfClass:NSString.class] && [values hasPrefix:@"//"])values=[@"https:" stringByAppendingString:values];
+        NSURL *url=DARHTTPURL(values);
+        if(url.host.length){if(![urls containsObject:url])[urls addObject:url];}
+        else if(!url)DARCollectImageURLs(DARGet(values,@"originURLList"),urls,depth+1);
+    }
 }
+NSArray<NSURL *> *DAROriginalImageURLs(id imageModel) {
+    NSMutableArray *urls=[NSMutableArray new];
+    DARCollectImageURLs(DARGet(imageModel,@"watermarkFreeUrlList"),urls,0);
+    DARCollectImageURLs(DARGet(imageModel,@"urlList"),urls,0);
+    return urls;
+}
+NSURL *DAROriginalImageURL(id imageModel) { return DAROriginalImageURLs(imageModel).firstObject; }
 static NSDictionary *DARPhotoExif(NSData *data) {
     if(!data.length)return nil;
     CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)data,NULL);
@@ -89,54 +105,141 @@ NSData *DARPhotoCompatibleJPEG(NSData *data) {
     return saved?result:jpeg;
 }
 void DARConfigurePhotoRequest(PHAssetCreationRequest *creation,NSData *data,NSDate *captureDate) {
+    CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)data,NULL);
+    NSString *identifier=source?[(__bridge NSString *)CGImageSourceGetType(source) copy]:nil;
+    if(source)CFRelease(source);
+    PHAssetResourceCreationOptions *options=[PHAssetResourceCreationOptions new];
+    if(identifier.length) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        options.uniformTypeIdentifier=identifier;
+#pragma clang diagnostic pop
+        NSString *extension=[UTType typeWithIdentifier:identifier].preferredFilenameExtension;
+        if(extension.length)options.originalFilename=[[@"Douyin-" stringByAppendingString:NSUUID.UUID.UUIDString] stringByAppendingPathExtension:extension];
+    }
+    [creation addResourceWithType:PHAssetResourceTypePhoto data:data options:options];
     if(captureDate)creation.creationDate=captureDate;
-    [creation addResourceWithType:PHAssetResourceTypePhoto data:data options:nil];
+}
+static NSError *DARPhotoError(NSString *message) {
+    return [NSError errorWithDomain:@"DouyinAntiRecall.Photo" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
+}
+static NSError *DARPhotoStageError(NSString *stage,NSError *error) {
+    return DARPhotoError(error?[NSString stringWithFormat:@"%@（%@ %ld）",stage,error.domain,(long)error.code]:stage);
+}
+NSData *DARReadPhotoDownload(NSURL *file,NSURLResponse *response,NSError *networkError,NSError **error) {
+    NSError *failure;
+    if(networkError)failure=DARPhotoStageError(@"图片下载失败",networkError);
+    else if(![response isKindOfClass:NSHTTPURLResponse.class])failure=DARPhotoError(@"图片下载未返回 HTTP 响应");
+    else if(((NSHTTPURLResponse *)response).statusCode!=200)failure=DARPhotoError([NSString stringWithFormat:@"图片下载 HTTP %ld",(long)((NSHTTPURLResponse *)response).statusCode]);
+    NSNumber *size;NSError *readError;
+    if(!failure && ![file getResourceValue:&size forKey:NSURLFileSizeKey error:&readError])failure=DARPhotoStageError(@"无法读取下载文件",readError);
+    if(!failure && (!size.unsignedLongLongValue || size.unsignedLongLongValue>50*1024*1024))failure=DARPhotoError(@"图片为空或超过 50 MB");
+    NSData *data;
+    if(!failure) {
+        data=[NSData dataWithContentsOfURL:file options:NSDataReadingMappedIfSafe error:&readError];
+        if(!data)failure=DARPhotoStageError(@"无法读取图片数据",readError);
+        else if(![UIImage imageWithData:data])failure=DARPhotoError(@"下载内容不是可解码图片");
+    }
+    if(error)*error=failure;
+    return failure?nil:data;
+}
+static void DARFetchPhoto(NSURL *url,void(^completion)(NSData *,NSError *)) {
+    NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url];request.timeoutInterval=30;
+    [request setValue:@"image/*,*/*;q=0.8" forHTTPHeaderField:@"Accept"];
+    [[NSURLSession.sharedSession downloadTaskWithRequest:request completionHandler:^(NSURL *file,NSURLResponse *response,NSError *networkError){
+        NSError *error;NSData *data=DARReadPhotoDownload(file,response,networkError,&error);
+        // downloadTask removes its temporary file after this callback. Materialize
+        // bytes before the next asynchronous Photos transaction uses them.
+        if(data)data=[NSData dataWithBytes:data.bytes length:data.length];
+        completion(data,error);
+    }] resume];
+}
+static void DARWritePhoto(NSData *data,NSDate *date,void(^completion)(BOOL,NSError *)) {
+    [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+        DARConfigurePhotoRequest([PHAssetCreationRequest creationRequestForAsset],data,date);
+    } completionHandler:^(BOOL success,NSError *error){
+        completion(success,success?nil:DARPhotoStageError(@"相册写入失败",error));
+    }];
 }
 @interface DARImageSaveTask : NSObject
-@property(nonatomic,strong) NSArray<NSURL *> *urls;
-@property(nonatomic) NSUInteger index;
-@property(nonatomic) NSUInteger successes;
-@property(nonatomic) NSUInteger dated;
+@property(nonatomic,strong) NSArray<NSArray<NSURL *> *> *candidates;
+@property(nonatomic,copy) DARPhotoFetch fetch;
+@property(nonatomic,copy) DARPhotoWrite writer;
+@property(nonatomic,copy) void(^completion)(NSUInteger,NSUInteger,NSUInteger,NSError *);
+@property(nonatomic) NSUInteger index,attempt,successes,recognized,dated;
+@property(nonatomic) BOOL currentRecognized;
+@property(nonatomic,strong) NSError *lastError,*currentError;
+@property(nonatomic,strong) NSDate *captureDate;
 - (void)next;
+- (void)tryCandidate;
 @end
 @implementation DARImageSaveTask
 - (void)next {
-    if(self.index>=self.urls.count){DARToast([NSString stringWithFormat:@"已保存 %lu/%lu 张，%lu 张按拍摄时间归档",(unsigned long)self.successes,(unsigned long)self.urls.count,(unsigned long)self.dated]);return;}
-    NSURL *url=self.urls[self.index++]; NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url];request.timeoutInterval=45;
-    [[NSURLSession.sharedSession downloadTaskWithRequest:request completionHandler:^(NSURL *file,NSURLResponse *response,NSError *error){
-        NSNumber *size;[file getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
-        NSData *data=(!error && [(NSHTTPURLResponse *)response statusCode]==200 && size.unsignedLongLongValue<=50*1024*1024)?[NSData dataWithContentsOfURL:file]:nil;
-        if(!data.length || ![UIImage imageWithData:data]){dispatch_async(dispatch_get_main_queue(),^{[self next];});return;}
-        NSDate *captureDate=DARPhotoCaptureDate(data);
-        [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-            DARConfigurePhotoRequest([PHAssetCreationRequest creationRequestForAsset],data,captureDate);
-        } completionHandler:^(BOOL success,__unused NSError *saveError){
-            if(success){dispatch_async(dispatch_get_main_queue(),^{self.successes++;if(captureDate)self.dated++;[self next];});return;}
-            // Some CDN formats render in UIKit but are not accepted by Photos.
-            // Keep the original bytes when possible; retry at full resolution as JPEG.
-            NSData *jpeg=DARPhotoCompatibleJPEG(data);
-            if(!jpeg){dispatch_async(dispatch_get_main_queue(),^{[self next];});return;}
-            [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-                DARConfigurePhotoRequest([PHAssetCreationRequest creationRequestForAsset],jpeg,captureDate);
-            } completionHandler:^(BOOL retried,__unused NSError *retryError){
-                dispatch_async(dispatch_get_main_queue(),^{if(retried){self.successes++;if(captureDate)self.dated++;}[self next];});
-            }];
-        }];
-    }] resume];
+    if(self.index>=self.candidates.count){self.completion(self.successes,self.recognized,self.dated,self.lastError);return;}
+    self.attempt=0;self.currentRecognized=NO;self.currentError=nil;self.captureDate=nil;[self tryCandidate];
+}
+- (void)finishImage:(BOOL)saved date:(NSDate *)date error:(NSError *)error {
+    if(saved){self.successes++;if(date)self.dated++;}
+    else self.lastError=error?:DARPhotoError(@"图片保存失败");
+    self.index++;[self next];
+}
+- (void)tryCandidate {
+    NSArray *urls=self.candidates[self.index];
+    if(self.attempt>=urls.count){[self finishImage:NO date:nil error:self.currentError?:DARPhotoError(@"当前图片没有可用的原图地址")];return;}
+    NSURL *url=urls[self.attempt++];
+    self.fetch(url,^(NSData *data,NSError *error){
+        dispatch_async(dispatch_get_main_queue(),^{
+            if(!data.length || error){self.currentError=error?:DARPhotoError(@"图片下载为空");[self tryCandidate];return;}
+            NSDate *date=DARPhotoCaptureDate(data)?:self.captureDate;
+            if(date)self.captureDate=date;
+            if(date && !self.currentRecognized){self.recognized++;self.currentRecognized=YES;}
+            self.writer(data,date,^(BOOL saved,NSError *saveError){
+                dispatch_async(dispatch_get_main_queue(),^{
+                    if(saved){[self finishImage:YES date:date error:nil];return;}
+                    NSData *jpeg=DARPhotoCompatibleJPEG(data);
+                    if(!jpeg){self.currentError=saveError?:DARPhotoError(@"图片格式无法转换");[self tryCandidate];return;}
+                    self.writer(jpeg,date,^(BOOL retried,NSError *retryError){
+                        dispatch_async(dispatch_get_main_queue(),^{
+                            if(retried)[self finishImage:YES date:date error:nil];
+                            else {self.currentError=retryError?:saveError?:DARPhotoError(@"相册写入失败");[self tryCandidate];}
+                        });
+                    });
+                });
+            });
+        });
+    });
 }
 @end
+void DARSavePhotoCandidates(NSArray<NSArray<NSURL *> *> *candidates,DARPhotoFetch fetch,DARPhotoWrite writer,
+    void(^completion)(NSUInteger,NSUInteger,NSUInteger,NSError *)) {
+    dispatch_async(dispatch_get_main_queue(),^{
+        DARImageSaveTask *task=[DARImageSaveTask new];task.candidates=candidates;
+        task.fetch=fetch?:^(NSURL *url,void(^done)(NSData *,NSError *)){DARFetchPhoto(url,done);};
+        task.writer=writer?:^(NSData *data,NSDate *date,void(^done)(BOOL,NSError *)){DARWritePhoto(data,date,done);};
+        task.completion=completion;[task next];
+    });
+}
 void DARSaveImages(id model,BOOL all) {
     if(!DAROptionEnabled(DAROptionImages)){DARToast(@"请先开启无水印保存图片");return;}
     id images=DARGet(model,@"albumImages"); if(![images isKindOfClass:NSArray.class] || ![images count]){DARToast(@"当前内容没有可保存的图片");return;}
     NSArray *selected=images;
     if(!all) {long long index=DARNumber(model,@"currentImageIndex"); if(index<1 || index>(long long)[images count])index=1;selected=@[images[(NSUInteger)index-1]];}
-    NSMutableArray *urls=[NSMutableArray new]; for(id image in selected){NSURL *url=DAROriginalImageURL(image);if(url)[urls addObject:url];}
-    if(!urls.count){DARToast(@"没有可用的原图地址");return;}
+    NSMutableArray *candidates=[NSMutableArray new]; for(id image in selected)[candidates addObject:DAROriginalImageURLs(image)];
+    BOOL any=NO;for(NSArray *urls in candidates)if(urls.count){any=YES;break;}
+    if(!any){DARToast(@"没有可用的原图地址");return;}
     if(![NSBundle.mainBundle objectForInfoDictionaryKey:@"NSPhotoLibraryAddUsageDescription"]){DARToast(@"当前安装包缺少保存相册的权限说明");return;}
     [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelAddOnly handler:^(PHAuthorizationStatus status){
         dispatch_async(dispatch_get_main_queue(),^{
             if(status!=PHAuthorizationStatusAuthorized && status!=PHAuthorizationStatusLimited){DARToast(@"请在系统设置中允许添加照片");return;}
-            DARToast(@"正在保存原图…");DARImageSaveTask *task=[DARImageSaveTask new];task.urls=urls;[task next];
+            DARToast(@"正在保存原图…");
+            DARSavePhotoCandidates(candidates,nil,nil,^(NSUInteger saved,NSUInteger recognized,NSUInteger dated,NSError *error){
+                NSString *summary=[NSString stringWithFormat:@"已保存 %lu/%lu 张；识别拍摄日期 %lu 张，成功按日期归档 %lu 张",(unsigned long)saved,(unsigned long)candidates.count,(unsigned long)recognized,(unsigned long)dated];
+                if(saved==candidates.count){DARToast(summary);return;}
+                UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"图片未全部保存" message:[summary stringByAppendingFormat:@"\n%@",error.localizedDescription?:@"保存失败，请重试"] preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                UIViewController *presenter=DARTopController();
+                if(presenter)[presenter presentViewController:alert animated:YES completion:nil];else DARToast(alert.message);
+            });
         });
     }];
 }

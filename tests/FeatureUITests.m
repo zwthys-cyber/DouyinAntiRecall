@@ -1,4 +1,5 @@
 #import "DARFeatures.h"
+#import "DARImageSave.h"
 #import "DAROptions.h"
 #import "DARAudio.h"
 #import "DARRuntime.h"
@@ -117,12 +118,13 @@ static void RegisterModernUploader(void) {
 @property(nonatomic,strong) NSDate *creationDate;
 @property(nonatomic,strong) NSData *resource;
 @property(nonatomic) NSUInteger dateWrites;
+@property(nonatomic,strong) PHAssetResourceCreationOptions *resourceOptions;
 @property(nonatomic) PHAssetResourceType resourceType;
 - (void)addResourceWithType:(PHAssetResourceType)type data:(NSData *)data options:(PHAssetResourceCreationOptions *)options;
 @end
 @implementation FeaturePhotoRequest
 - (void)setCreationDate:(NSDate *)date { _creationDate=date;_dateWrites++; }
-- (void)addResourceWithType:(PHAssetResourceType)type data:(NSData *)data options:(__unused PHAssetResourceCreationOptions *)options {self.resourceType=type;self.resource=data;}
+- (void)addResourceWithType:(PHAssetResourceType)type data:(NSData *)data options:(PHAssetResourceCreationOptions *)options {self.resourceType=type;self.resource=data;self.resourceOptions=options;}
 @end
 static NSData *PhotoDateFixture(NSData *pixels,NSDictionary *exif,NSDictionary *tiff) {
     CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)pixels,NULL);
@@ -154,6 +156,7 @@ static void TestPhotoCaptureDates(NSData *pixels) {
     FCheck(convertedDate && fabs([convertedDate timeIntervalSinceDate:expected])<0.001,@"JPEG compatibility conversion retains original capture date and timezone");
     FeaturePhotoRequest *request=[FeaturePhotoRequest new];
     DARConfigurePhotoRequest((PHAssetCreationRequest *)request,original,capture);
+    FCheck([request.resourceOptions.uniformTypeIdentifier isEqual:@"public.jpeg"] && [@[@"jpg",@"jpeg"] containsObject:request.resourceOptions.originalFilename.pathExtension],@"Photos receives the actual JPEG type and filename extension");
     FCheck([request.creationDate isEqual:capture] && request.dateWrites==1 && request.resource==original && request.resourceType==PHAssetResourceTypePhoto,@"original Photos request sets capture date and keeps original bytes");
     FeaturePhotoRequest *retry=[FeaturePhotoRequest new];
     DARConfigurePhotoRequest((PHAssetCreationRequest *)retry,converted,capture);
@@ -181,6 +184,53 @@ static void TestPhotoCaptureDates(NSData *pixels) {
     FeaturePhotoRequest *undated=[FeaturePhotoRequest new];
     DARConfigurePhotoRequest((PHAssetCreationRequest *)undated,pixels,nil);
     FCheck(!undated.dateWrites && undated.resource==pixels,@"undated image saves normally without overriding the system date");
+}
+static void TestImageSavePipeline(void(^completion)(void)) {
+    UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,6)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+        CGContextSetFillColorWithColor(context.CGContext,UIColor.redColor.CGColor);CGContextFillRect(context.CGContext,CGRectMake(0,0,8,6));
+    }];
+    NSData *plain=UIImagePNGRepresentation(image);
+    NSData *dated=PhotoDateFixture(plain,@{(__bridge NSString *)kCGImagePropertyExifDateTimeOriginal:@"2021:05:06 12:30:00",
+                                         (__bridge NSString *)kCGImagePropertyExifOffsetTimeOriginal:@"+08:00"},nil);
+    NSURL *url=[NSURL URLWithString:@"https://example.test/original"],*backup=[NSURL URLWithString:@"https://example.test/backup"];
+    FeatureModel *model=[FeatureModel new];model.watermarkFreeUrlList=@[url.absoluteString,url.absoluteString,@"file:///bad"];
+    model.urlList=@[@"//example.test/backup"];
+    FCheck([DAROriginalImageURLs(model) isEqual:@[url,backup]],@"image candidates preserve no-watermark priority deduplicate and include backup hosts");
+    NSURL *file=[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSUUID.UUID.UUIDString];
+    [plain writeToURL:file atomically:YES];
+    NSHTTPURLResponse *ok=[[NSHTTPURLResponse alloc] initWithURL:url statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil];
+    NSError *error;
+    FCheck([DARReadPhotoDownload(file,ok,nil,&error) isEqual:plain] && !error,@"download reader accepts real image bytes even without a URL extension or MIME type");
+    NSHTTPURLResponse *denied=[[NSHTTPURLResponse alloc] initWithURL:url statusCode:403 HTTPVersion:@"HTTP/1.1" headerFields:nil];
+    FCheck(!DARReadPhotoDownload(file,denied,nil,&error) && [error.localizedDescription containsString:@"403"],@"CDN denial reports HTTP status rather than silently saving zero");
+    [@"<html>not an image</html>" writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    FCheck(!DARReadPhotoDownload(file,ok,nil,&error) && [error.localizedDescription containsString:@"可解码"],@"HTTP success with a non-image payload reports decoding failure");
+    [NSFileManager.defaultManager removeItemAtURL:file error:NULL];
+    FCheck(!DARReadPhotoDownload(file,ok,nil,&error) && error!=nil,@"missing temporary download file reports a read failure");
+    NSError *offline=[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil];
+    FCheck(!DARReadPhotoDownload(nil,nil,offline,&error) && [error.localizedDescription containsString:@"-1009"],@"network failure retains its diagnostic code");
+    __block NSUInteger fetches=0,writes=0;
+    DARPhotoFetch fetch=^(NSURL *candidate,void(^done)(NSData *,NSError *)){
+        fetches++;if([candidate isEqual:url])done(nil,offline);else done(dated,nil);
+    };
+    DARPhotoWrite writer=^(NSData *data,NSDate *date,void(^done)(BOOL,NSError *)){
+        writes++;FCheck([date isEqual:UTCDate(2021,5,6,4,30,0)],@"capture date survives download fallback and JPEG retry");
+        if(writes==1)done(NO,[NSError errorWithDomain:@"PHPhotosErrorDomain" code:3300 userInfo:nil]);
+        else {FCheck(![data isEqual:dated] && DARPhotoCaptureDate(data)!=nil,@"Photos format rejection retries with a converted dated JPEG");done(YES,nil);}
+    };
+    DARSavePhotoCandidates(@[@[url,backup]],fetch,writer,^(NSUInteger saved,NSUInteger recognized,NSUInteger dates,NSError *failure){
+        FCheck(NSThread.isMainThread && saved==1 && recognized==1 && dates==1 && !failure && fetches==2 && writes==2,@"failed primary CDN and original Photos write recover without duplicate saves or false error");
+        DARPhotoFetch mixed=^(NSURL *candidate,void(^done)(NSData *,NSError *)){done([candidate isEqual:url]?dated:plain,nil);};
+        DARPhotoWrite rejectDated=^(NSData *data,__unused NSDate *date,void(^done)(BOOL,NSError *)){
+            if(DARPhotoCaptureDate(data))done(NO,[NSError errorWithDomain:@"PHPhotosErrorDomain" code:3311 userInfo:@{NSLocalizedDescriptionKey:@"相册写入失败（PHPhotosErrorDomain 3311）"}]);else done(YES,nil);
+        };
+        DARSavePhotoCandidates(@[@[url],@[backup],@[]],mixed,rejectDated,^(NSUInteger partial,NSUInteger identified,NSUInteger applied,NSError *partialError){
+            FCheck(partial==1 && identified==1 && applied==0 && partialError!=nil,@"partial album failures do not stop later photos and recognition is independent of save success");
+            DARSavePhotoCandidates(@[@[url]],mixed,rejectDated,^(NSUInteger zero,NSUInteger found,NSUInteger appliedZero,NSError *writeError){
+                FCheck(!zero && found==1 && !appliedZero && [writeError.localizedDescription containsString:@"3311"],@"zero-saved result preserves the actual Photos error and independently recognized date");completion();
+            });
+        });
+    });
 }
 static void TestSettingsIPMenus(void) {
     for(NSString *key in @[DAROptionIP,DAROptionAudioLibrary,DAROptionCommentAudio,DAROptionImages])DARSetOption(key,NO);
@@ -354,7 +404,7 @@ void DARRunFeatureTests(void(^completion)(void)) {
                     FCheck(cancelledError && !library.armed,@"disabling during transcoding cannot rearm audio later");
                     [library removeFile:imported error:NULL];[NSFileManager.defaultManager removeItemAtURL:temporary error:NULL];
                     for(NSString *key in @[DAROptionIP,DAROptionAudioLibrary,DAROptionCommentAudio,DAROptionImages])DARSetOption(key,NO);
-                    completion();
+                    TestImageSavePipeline(completion);
                 }];
                 DARSetOption(DAROptionCommentAudio,NO);
             }];

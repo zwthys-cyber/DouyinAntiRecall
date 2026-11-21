@@ -1,9 +1,9 @@
-抖音防撤回插件安装说明（v0.2.2 实验版）
+抖音防撤回插件安装说明（v0.2.3 实验版）
 
 目标：抖音 41.2.0（412021），原始包标识 com.ss.iphone.ugc.Aweme；iOS 17.0。
 版本或构建号不同会自动不启用，不能直接用于其他抖音版本。
 
-1. 在 GitHub Releases 的 v0.2.2 页面下载 DouyinAntiRecall.dylib，或在 Actions 成功运行页面下载 ZIP 产物。
+1. 在 GitHub Releases 的 v0.2.3 页面下载 DouyinAntiRecall.dylib，或在 Actions 成功运行页面下载 ZIP 产物。
 2. 解压，找到 DouyinAntiRecall.dylib。可用 SHA256SUMS 对照校验文件。
 3. 在设备上用 TrollStore 安装自己已有的 41.2.0 解密安装包。
    原始 ZIP 若顶层为 Payload，可保留 ZIP 原件，复制一份改名 .ipa 后交给 TrollStore。
@@ -35,3 +35,5 @@ https://github.com/opa334/TrollStore
 新版入口：抖音自己的“设置”页面顶部 → 抖音增强。新增属地、音频、原图功能默认关闭，请按需启用；设置页可直接打开音频库。完整操作见 docs/FEATURES.zh-CN.md。
 
 图片日期：原图含有效 EXIF 拍摄时间时，插件会用它设置相册时间；没有拍摄时间时保持系统默认。保存提示显示识别张数。旧日期的照片可能出现在相册对应日期位置，请通过“最近保存/最近项目”或日期查找。
+
+保存失败：新版会弹出失败原因。请保留完整提示文字（如 HTTP 403 或 PHPhotosErrorDomain 错误码），以区分下载失败和相册写入失败。日期识别数量独立于成功保存数量。
