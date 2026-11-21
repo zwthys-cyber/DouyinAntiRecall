@@ -1,4 +1,5 @@
 #import "DARBadge.h"
+#import "DAROptions.h"
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
@@ -45,6 +46,7 @@ static BOOL DARCellMatchesKey(id cell, NSString *key) {
     return NO;
 }
 static BOOL DARCellHasBadge(id cell) {
+    if(!DAROptionEnabled(DAROptionAntiRecall) || !DAROptionEnabled(DAROptionBadge))return NO;
     NSString *liveKey = objc_getAssociatedObject(cell, &DARLiveRecallAssociation);
     if (liveKey && DARCellMatchesKey(cell, liveKey)) return YES;
     if (DARHasRecallBadge(DARBadgeObject(cell, @"message"))) return YES;
@@ -228,6 +230,11 @@ BOOL DARInstallBadgeHooks(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         DARBoundCells = [NSHashTable weakObjectsHashTable];
+        [[NSNotificationCenter defaultCenter] addObserverForName:DAROptionsDidChange object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *notice){
+            for(UITableViewCell *cell in DARBoundCells.allObjects) {
+                @try { DARUpdateBadge(cell); [cell setNeedsLayout]; } @catch (__unused NSException *exception) {}
+            }
+        }];
         [[NSNotificationCenter defaultCenter] addObserverForName:DARRecallStatusDidChangeNotification
                                                          object:nil queue:nil usingBlock:^(NSNotification *notice) {
             void (^refresh)(void) = ^{

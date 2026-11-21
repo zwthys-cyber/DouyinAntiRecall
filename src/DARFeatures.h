@@ -1,0 +1,16 @@
+#import <UIKit/UIKit.h>
+FOUNDATION_EXPORT BOOL DARInstallFeatures(void);
+FOUNDATION_EXPORT void DAROpenSettings(UIViewController *presenter);
+FOUNDATION_EXPORT void DAROpenAudioLibrary(UIViewController *presenter);
+FOUNDATION_EXPORT UIViewController *DARTopController(void);
+FOUNDATION_EXPORT void DARToast(NSString *message);
+FOUNDATION_EXPORT NSString *DARLocationForModel(id model);
+FOUNDATION_EXPORT NSURL *DAROriginalImageURL(id imageModel);
+FOUNDATION_EXPORT NSArray *DARAugmentLongPressGroups(NSArray *groups, id model, BOOL modern);
+FOUNDATION_EXPORT NSArray *DARAugmentSettingsSections(NSArray *sections, id viewModel);
+FOUNDATION_EXPORT BOOL DARInstallIPHooks(void);
+FOUNDATION_EXPORT BOOL DARInstallMenuHooks(void);
+FOUNDATION_EXPORT BOOL DARInstallAudioHooks(void);
+FOUNDATION_EXPORT BOOL DARInstallSettingsHooks(void);
+FOUNDATION_EXPORT void DARSaveImages(id model, BOOL all);
+FOUNDATION_EXPORT void DARSaveAudioFromModel(id model);

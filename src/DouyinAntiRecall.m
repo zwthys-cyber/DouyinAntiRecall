@@ -4,6 +4,10 @@
 #import <os/log.h>
 #import "DARCache.h"
 #import "DARBadge.h"
+#import "DAROptions.h"
+#ifndef DAR_TESTING
+#import "DARFeatures.h"
+#endif
 #include <string.h>
 
 // Deliberately scoped to the metadata in AwemeCore 41.2.0 / 412021.
@@ -51,6 +55,7 @@ static BOOL DARRecalled(NSDictionary *ext) {
 NSString *const DARRecallStatusKey = @"dar_retained_recall_v2";
 NSNotificationName const DARRecallStatusDidChangeNotification = @"local.douyin.antirecall.status-changed";
 BOOL DARHasRecallBadge(id message) {
+    if(!DAROptionEnabled(DAROptionAntiRecall) || !DAROptionEnabled(DAROptionBadge))return NO;
     id ext = DARObject(message, @"syncedExt");
     if (![ext isKindOfClass:NSDictionary.class]) return NO;
     id value = ext[DARRecallStatusKey];
@@ -76,6 +81,7 @@ NSString *DARTrackingKeyForMessage(id message) {
     return account > 0 ? DARKey(account, sdk) : nil;
 }
 static id DARPrepareModel(id message, id model) {
+    if(!DAROptionEnabled(DAROptionAntiRecall))return model;
     long long account = DARAccountID(message);
     long long sender = DARInteger(model, @"sender");
     // Fail open for unknown account/sender and preserve the normal outgoing path.
@@ -163,12 +169,14 @@ __attribute__((constructor)) static void DARInitialize(void) {
         dispatch_async(dispatch_get_main_queue(), ^{
             BOOL messageReady = DARInstall();
             BOOL badgeReady = DARInstallBadgeHooks();
-            if (messageReady && badgeReady) return;
+            BOOL featuresReady = DARInstallFeatures();
+            if (messageReady && badgeReady && featuresReady) return;
             for (int seconds = 1; seconds <= 10; seconds++) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, seconds * NSEC_PER_SEC),
                                dispatch_get_main_queue(), ^{
                                    (void)DARInstall();
                                    (void)DARInstallBadgeHooks();
+                                   (void)DARInstallFeatures();
                                });
             }
         });

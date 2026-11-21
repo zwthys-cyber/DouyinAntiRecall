@@ -68,3 +68,13 @@ v0.1.2 仅在布局及配置时读取显示标记。收到撤回后，SDK 消息
 成功保留消息后，在原 SDK 方法完成之后发出主线程通知，携带账号/会话/消息标识。通过弱引用追踪配置过的聊天单元格，匹配其 SDK 身份后直接更新标签，并安排后续布局。AWEIMMessage 使用已观察的 transToIESMessage 接口解析身份；不改写旧展示副本内容。即时状态与完整身份绑定，prepareForReuse 清除，其他账号/会话/消息不会套用。
 
 通知接收端有重入保护，避免桥接身份 getter 触发 SDK 转换时递归刷新；未知对象或异常只影响该单元格的标签刷新，不重跑原 SDK 方法。
+
+## v0.2.0 功能接口
+
+参考仓库 ac54u-mobile/Aweme，固定提交 a7138914a7de63bfc6964e622723d2fc75cbb2cc；仅移植请求的功能及离线城市映射。许可证见 THIRD_PARTY.md。
+
+41.2.0 静态元数据对应：AWESettingsViewModel.sectionDataArray (0x1d7bc6bc)，AWESettingItemModel.setCellTappedBlock: (0x1d7ec8a4)，AWEPlayInteractionTimestampElement.timestampLabel (0x18cc7ffc)，两个长按面板 dataArray (0x173bddd8 / 0x173e9384)，AWEImageAlbumImageModel.watermarkFreeUrlList (0x146ccdf8)。
+
+评论音频入口：AWECommentAudioRecorderController.audioRecorderDidFinishRecording:success:error: (0xfea0b08)、AWECommentAudioUploadManager.startUploadAudioWithFilePath: (0xfea9220)、_TtC31AWECommentMediaManagerSwiftImpl27CommentMediaUploaderManager.audioUploader: (0x67c53c)。旧录音完成回调读取 recorder.url.path 和 currentTime，替换文件后在调用原回调前同步录音时长；上传器处理仅作用于下一条已明确准备的评论音频。
+
+Swift 上传入口只处理通过 ObjC getter 提供 audioFilePath/filePath/fileURL 的输入或已知包装字段；没有修改 Swift 本机调用约定或猜测对象内存布局。无法解析的载荷走原方法，后续仍可由评论专用上传路径处理。新增功能需真机确认各实际路径是否被覆盖。

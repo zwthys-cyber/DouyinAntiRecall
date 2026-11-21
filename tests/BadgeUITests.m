@@ -7,10 +7,13 @@ static void Record(NSString *status) {
     [status writeToFile:[folder stringByAppendingPathComponent:@"badge-result.txt"]
             atomically:YES encoding:NSUTF8StringEncoding error:NULL];
 }
+void DARFeatureAssert(BOOL condition, NSString *message);
+extern void DARRunFeatureTests(void (^completion)(void));
 static void Check(BOOL condition, NSString *message) {
     if (!condition) { Record([@"FAIL: " stringByAppendingString:message]); NSLog(@"FAIL: %@", message); exit(1); }
     Record([@"CHECK: " stringByAppendingString:message]);
 }
+void DARFeatureAssert(BOOL condition, NSString *message) { Check(condition,message); }
 @interface BadgeAccount : NSObject
 @property(nonatomic, copy) NSString *userID;
 @end
@@ -172,10 +175,12 @@ static void RunTests(void) {
         // assertion after it, and return from RunTests so the main queue can run.
         dispatch_async(dispatch_get_main_queue(), ^{
             Check(Badge(liveModern) && !Badge(liveModern).hidden, @"background notification refreshes UIKit on the main thread");
-            Record(@"PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode, immediate stale-model refresh and identity isolation");
-            puts("PASS: UIKit badge placement, no overlap, reuse, configuration, view model path, dark mode, immediate stale-model refresh and identity isolation");
-            fflush(stdout);
-            exit(0);
+            DARRunFeatureTests(^{
+                Record(@"PASS: UIKit badge placement, immediate refresh, switches, settings entry, IP labels, media menus and one-shot comment audio");
+                puts("PASS: UIKit badge placement, immediate refresh, switches, settings entry, IP labels, media menus and one-shot comment audio");
+                fflush(stdout);
+                exit(0);
+            });
         });
     });
 }

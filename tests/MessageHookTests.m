@@ -2,6 +2,7 @@
 #import <objc/runtime.h>
 #import "DARCache.h"
 #import "DARBadge.h"
+#import "DAROptions.h"
 extern BOOL DARInstallForTesting(void);
 
 static void Check(BOOL condition, NSString *message) {
@@ -58,6 +59,7 @@ static TestModel *Model(NSString *identifier, long long sender, NSDictionary *ex
 }
 int main(void) {
     @autoreleasepool {
+        DARSetOption(DAROptionAntiRecall,YES); DARSetOption(DAROptionBadge,YES);
         Check(DARInstallForTesting(), @"hook installs");
         Check(DARInstallForTesting(), @"repeated installation is idempotent");
         TIMXOMessage *message = [TIMXOMessage new];
@@ -144,6 +146,16 @@ int main(void) {
         for (int i=0; i<1001; i++) [cache storeContent:@{@"text": @(i)} forKey:[NSString stringWithFormat:@"entry-%d",i]];
         Check(![cache contentForKey:@"entry-0"], @"cache evicts oldest entries");
         [[NSFileManager defaultManager] removeItemAtURL:file error:NULL];
+        DARSetOption(DAROptionAntiRecall,NO);
+        TestModel *disabledRecall=Model(NSUUID.UUID.UUIDString,2002,recallExt,body);
+        [message applyLogicWithModel_DouYin:disabledRecall];
+        Check(message.lastModel==disabledRecall && message.recalled,@"anti-recall switch restores original handling");
+        DARSetOption(DAROptionAntiRecall,YES);
+        [message applyLogicWithModel_DouYin:Model(NSUUID.UUID.UUIDString,2002,recallExt,body)];
+        DARSetOption(DAROptionBadge,NO);
+        Check(!DARHasRecallBadge(message) && !message.recalled,@"badge switch hides status while retention stays enabled");
+        DARSetOption(DAROptionBadge,YES);
+        Check(DARHasRecallBadge(message),@"badge switch restores retained status");
         [[NSNotificationCenter defaultCenter] removeObserver:statusObserver];
         puts("PASS: message conversion, ownership, isolation, immutability, persistence, cache limits, live status notification");
     }
