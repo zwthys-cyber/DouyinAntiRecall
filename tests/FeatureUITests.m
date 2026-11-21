@@ -163,8 +163,12 @@ static void TestPhotoCaptureDates(NSData *pixels) {
     NSTimeZone *previous=NSTimeZone.defaultTimeZone;
     NSTimeZone.defaultTimeZone=[NSTimeZone timeZoneForSecondsFromGMT:8*3600];
     NSData *local=PhotoDateFixture(pixels,@{dateKey:@"2024:06:01 12:00:00"},nil);
+    NSCalendar *systemCalendar=[[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    systemCalendar.timeZone=NSTimeZone.localTimeZone;
+    NSDateComponents *localParts=[NSDateComponents new];localParts.year=2024;localParts.month=6;localParts.day=1;localParts.hour=12;
+    NSDate *expectedLocal=[systemCalendar dateFromComponents:localParts];
     NSDate *localDate=DARPhotoCaptureDate(local);NSTimeZone.defaultTimeZone=previous;
-    FCheck([localDate isEqual:UTCDate(2024,6,1,4,0,0)],@"EXIF without timezone follows the device local timezone");
+    FCheck([localDate isEqual:expectedLocal],@"EXIF without timezone follows the device system timezone rather than an app override");
     for(NSDictionary *invalid in @[@{dateKey:@"0000:00:00 00:00:00"},@{dateKey:@"2023:02:29 12:00:00"},
                                   @{dateKey:@"2024:01:01 25:00:00"},@{dateKey:@"invalid"},
                                   @{dateKey:@"2024:01:01 00:00:00",offsetKey:@"+15:00"},
