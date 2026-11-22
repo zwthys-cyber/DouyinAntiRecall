@@ -81,6 +81,18 @@ NSString *DARTrackingKeyForMessage(id message) {
     account = DARAccountID(sdk);
     return account > 0 ? DARKey(account, sdk) : nil;
 }
+// Match only the reported text-only sentinel. Do not search inside real text,
+// mentions, structured messages or media, where these words may be user content.
+static BOOL DARRecallPlaceholder(id content) {
+    if (![content isKindOfClass:NSDictionary.class] || [content count] != 1) return NO;
+    id text = content[@"text"];
+    if (![text isKindOfClass:NSString.class]) return NO;
+    NSString *trimmed = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return [trimmed caseInsensitiveCompare:@"Recall Content Hided"] == NSOrderedSame;
+}
+static BOOL DARUsableRecallContent(id content) {
+    return [content isKindOfClass:NSDictionary.class] && [content count] && !DARRecallPlaceholder(content);
+}
 static id DARPrepareModel(id message, id model) {
     if(!DAROptionEnabled(DAROptionAntiRecall))return model;
     long long account = DARAccountID(message);
@@ -93,7 +105,9 @@ static id DARPrepareModel(id message, id model) {
     NSString *key = DARKey(account, model);
     if (!key) return model;
     if (!DARRecalled(ext)) {
-        if ([content isKindOfClass:NSDictionary.class]) [[DARCache shared] storeContent:content forKey:key];
+        // A late placeholder must not replace an earlier original snapshot.
+        // Ordinary messages are still forwarded unchanged, including literal text.
+        if (DARUsableRecallContent(content)) [[DARCache shared] storeContent:content forKey:key];
         return model;
     }
     id recaller = ext[@"s:recall_uid"];
@@ -101,8 +115,8 @@ static id DARPrepareModel(id message, id model) {
         [recaller longLongValue] == account) return model;
     NSDictionary *saved = [[DARCache shared] contentForKey:key];
     // Without a prior snapshot, only retain content still present in the incoming model.
-    NSDictionary *original = saved ?: ([content isKindOfClass:NSDictionary.class] ? content : nil);
-    if (!original.count) return model;
+    NSDictionary *original = DARUsableRecallContent(saved) ? saved : (DARUsableRecallContent(content) ? content : nil);
+    if (!original) return model;
     if (![model conformsToProtocol:@protocol(NSCopying)]) return model;
     id copy = [model copy];
     if (!copy || copy == model) return model;
@@ -111,6 +125,8 @@ static id DARPrepareModel(id message, id model) {
     clean[DARRecallStatusKey] = @"1";
     if (!DARObjectSetter(copy, @"setExtDictionary:", clean) ||
         !DARObjectSetter(copy, @"setContentDictionary:", original)) return model;
+    // Keep a genuine body first seen on a recalled model for later empty updates.
+    [[DARCache shared] storeContent:original forKey:key];
     os_log_info(DARLog, "Retained incoming recalled message locally");
     return copy;
 }

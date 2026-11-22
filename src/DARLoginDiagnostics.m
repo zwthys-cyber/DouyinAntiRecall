@@ -101,7 +101,7 @@ NSString *DARLoginDiagnosticReport(void) {
     NSMutableArray *events=DARLoginEvents();NSString *recent;
     @synchronized(events){recent=events.count?[events componentsJoinedByString:@"\n"]:@"尚未捕获登录错误";}
     NSUInteger installed=(DAROriginalLoginError!=NULL)+(DAROriginal1049!=NULL)+(DAROriginalForceUpdate!=NULL)+(DAROriginalUpgradePanel!=NULL);
-    return [NSString stringWithFormat:@"v0.2.10 已加载\n宿主允许观察：%@\n观察点：%lu/4\niOS %@\n抖音 %@ (%@)\nBundle %@\nTeam %@\nApp ID %@\nApp Attest %@\n签名字段：%@\n\n%@\n\n仅记录错误域、错误码和处理路径，重启清空。不读取错误正文、手机号、验证码或令牌。",
+    return [NSString stringWithFormat:@"v0.2.11 已加载\n宿主允许观察：%@\n观察点：%lu/4\niOS %@\n抖音 %@ (%@)\nBundle %@\nTeam %@\nApp ID %@\nApp Attest %@\n签名字段：%@\n\n%@\n\n仅记录错误域、错误码和处理路径，重启清空。不读取错误正文、手机号、验证码或令牌。",
         DARLoginObservationAllowed?@"是":@"否（版本不匹配，仅显示诊断）",(unsigned long)installed,
         UIDevice.currentDevice.systemVersion,[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"未知",
         [bundle objectForInfoDictionaryKey:@"CFBundleVersion"]?:@"未知",bundle.bundleIdentifier?:@"未知",
