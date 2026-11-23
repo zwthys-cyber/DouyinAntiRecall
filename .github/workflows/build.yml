@@ -4,11 +4,17 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      runner:
+        description: macOS image for this validation run
+        type: choice
+        default: macos-15
+        options: [macos-15, macos-26]
 permissions:
   contents: read
 jobs:
   validate:
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
