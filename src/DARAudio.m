@@ -181,7 +181,9 @@ static id DARModernCommentUploader(id self,SEL selector,id input) {
             if(url && [DARAudioLibrary.shared replaceCommentRecording:url error:NULL]) {
                 Class audioClass=NSClassFromString(@"AWECommentAudioModel");
                 if(!DAROptionEnabled(DAROptionManualAudioDuration) && audioClass && [model isKindOfClass:audioClass]) {
-                    DARPutNumber(model,@"setDuration:",floor(duration));
+                    // 41.2.0 sendRecordMessageOrNot (0xfea1060) multiplies
+                    // recorder seconds by 1000 before writing this integer field.
+                    DARPutNumber(model,@"setDuration:",floor(duration*1000.0));
                     DARPutNumber(model,@"setCurrentTime:",duration);
                 }
                 break;

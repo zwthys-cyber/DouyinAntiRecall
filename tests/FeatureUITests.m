@@ -202,10 +202,14 @@ static UIButton *FindLoginDiagnosticsButton(void) {
 @implementation AWECommentAudioUploadManager
 - (void)startUploadAudioWithFilePath:(NSString *)path {self.calls++;self.observedData=[NSData dataWithContentsOfFile:path];}
 @end
-@interface FeatureAudioInput : NSObject
+@interface AWECommentAudioModel : NSObject
 @property(copy)NSString *audioFilePath;
 @property NSInteger duration;
 @property double currentTime;
+@end
+@implementation AWECommentAudioModel
+@end
+@interface FeatureAudioInput : AWECommentAudioModel
 @end
 @implementation FeatureAudioInput
 @end
@@ -460,10 +464,10 @@ static void TestManualAudioDuration(void(^completion)(void)) {
         [DARAudioLibrary.shared prepareFile:file completion:^(NSError *modernError){
             FCheck(!modernError,@"full audio can be prepared for the modern uploader");
             [sourceBytes writeToURL:recording atomically:YES];
-            FeatureAudioInput *input=[FeatureAudioInput new];input.audioFilePath=recording.path;input.duration=2;input.currentTime=2.5;
+            FeatureAudioInput *input=[FeatureAudioInput new];input.audioFilePath=recording.path;input.duration=2500;input.currentTime=2.5;
             id manager=[[NSClassFromString(@"_TtC31AWECommentMediaManagerSwiftImpl27CommentMediaUploaderManager") alloc] init];
             ((id(*)(id,SEL,id))objc_msgSend)(manager,NSSelectorFromString(@"audioUploader:"),input);
-            FCheck(input.duration==2 && input.currentTime==2.5 && CMTimeGetSeconds([AVURLAsset URLAssetWithURL:recording options:nil].duration)>31.9,@"modern upload retains native manual duration fields and the complete audio file");
+            FCheck(input.duration==2500 && input.currentTime==2.5 && CMTimeGetSeconds([AVURLAsset URLAssetWithURL:recording options:nil].duration)>31.9,@"modern upload retains native manual duration fields and the complete audio file");
             [DARAudioLibrary.shared removeFile:file error:NULL];[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
             DARSetOption(DAROptionCommentAudio,NO);completion();
         }];
@@ -571,6 +575,7 @@ static void RunFeatureTestsWithEntry(void(^completion)(void)) {
                 FeatureAudioInput *input=[FeatureAudioInput new];input.audioFilePath=recording.path;
                 id manager=[[NSClassFromString(@"_TtC31AWECommentMediaManagerSwiftImpl27CommentMediaUploaderManager") alloc] init];
                 id result=((id(*)(id,SEL,id))objc_msgSend)(manager,NSSelectorFromString(@"audioUploader:"),input);
+                FCheck(input.currentTime>1.9 && input.currentTime<2.1 && input.duration==(NSInteger)floor(input.currentTime*1000.0),@"modern comment audio model uses integer milliseconds for duration and seconds for currentTime");
                 FCheck(result==input && ModernUploadCalls==1 && ![ModernUploadData isEqual:before] && !library.armed,@"modern comment uploader replaces audio and preserves the native return object");
             [library prepareFile:imported completion:^(NSError *thirdError){
                 FCheck(!thirdError && library.armed,@"pending state is observable before switching off");
