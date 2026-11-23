@@ -154,7 +154,8 @@ void DARToast(NSString *message) {
     return [NSString stringWithFormat:@"%lu 个音频 · %lu 个文件夹 · %@",(unsigned long)(self.files.count-folders),(unsigned long)folders,[NSByteCountFormatter stringFromByteCount:(long long)bytes countStyle:NSByteCountFormatterCountStyleFile]];
 }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(__unused NSInteger)section {
-    return DARAudioLibrary.shared.armed?@"已准备下一条评论语音。返回评论区，手动录音后松开发送，评论时长默认跟随录音时长，音频内容不裁剪。5 分钟内有效，仅使用一次。":@"右侧按钮可试听或发送。发送会先准备音频，随后回评论区录音松开发送。评论时长默认跟随手动录音，音频内容保留原时长。点文件可打开更多操作。";
+    if(DARAudioLibrary.shared.armed && DARAudioLibrary.shared.preparedUsesFileDuration)return [NSString stringWithFormat:@"已准备兼容发送副本（%.1f 秒），原文件保持完整。返回评论区手动录音后松开，提交时长使用副本实际长度。5 分钟内有效，仅使用一次。",DARAudioLibrary.shared.preparedDuration];
+    return DARAudioLibrary.shared.armed?@"已准备下一条评论语音。返回评论区，手动录音后松开发送，评论时长默认跟随录音时长，音频内容不裁剪。5 分钟内有效，仅使用一次。":@"右侧按钮可试听或发送。长音频可选择兼容发送（最长 29.5 秒）或完整音频；随后回评论区录音松开发送。点文件可打开更多操作。";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"audio"];
