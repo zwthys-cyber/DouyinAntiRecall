@@ -7,7 +7,7 @@
 #include <math.h>
 static NSData *Fixture(NSString *path,NSString *value) {
     CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();
-    CGContextRef context=CGBitmapContextCreate(NULL,8,6,8,0,color,kCGImageAlphaPremultipliedLast);
+    CGContextRef context=CGBitmapContextCreate(NULL,8,6,8,0,color,(CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(color);CGContextSetRGBFillColor(context,1,0,0,1);CGContextFillRect(context,CGRectMake(0,0,8,6));
     CGImageRef image=CGBitmapContextCreateImage(context);CGContextRelease(context);
     NSMutableData *data=[NSMutableData new];
