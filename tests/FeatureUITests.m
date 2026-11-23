@@ -483,6 +483,35 @@ static void WaitForAudioRow(UITableViewController *controller, NSUInteger remain
         WaitForAudioRow(controller,remaining-1,completion);
     });
 }
+static void TestAudioAssistantFolders(NSURL *fixture) {
+    DARAudioLibrary *library=DARAudioLibrary.shared;NSError *error;
+    NSURL *folder=[library createFolder:NSUUID.UUID.UUIDString inDirectory:library.directory error:&error];
+    FCheck(folder && !error && [[library itemsInDirectory:library.directory] containsObject:folder],@"audio assistant creates visible folders in the existing library");
+    NSURL *nested=[library importFile:fixture name:@"nested.wav" intoDirectory:folder error:&error];
+    FCheck(nested && [[library itemsInDirectory:folder] containsObject:nested],@"audio import targets the selected folder");
+    NSURL *renamed=[library renameItem:nested name:@"renamed" error:&error];
+    FCheck(renamed && [renamed.lastPathComponent isEqual:@"renamed.wav"] && [NSFileManager.defaultManager fileExistsAtPath:renamed.path],@"rename preserves the actual audio extension");
+    FCheck(![library createFolder:@"../escape" inDirectory:folder error:NULL] && ![library createFolder:@"Prepared" inDirectory:library.directory error:NULL],@"folder creation rejects traversal and reserved preparation names");
+    NSURL *outside=[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSUUID.UUID.UUIDString];
+    [NSFileManager.defaultManager createDirectoryAtURL:outside withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSURL *link=[folder URLByAppendingPathComponent:@"outside-link"];
+    [NSFileManager.defaultManager createSymbolicLinkAtURL:link withDestinationURL:outside error:NULL];
+    FCheck(![[library itemsInDirectory:folder] containsObject:link] && ![library importFile:fixture name:@"escape.wav" intoDirectory:link error:NULL],@"audio assistant refuses folders resolving outside its library");
+    UITableViewController *controller=[[NSClassFromString(@"DARLibraryController") alloc] init];
+    DARPut(controller,@"setCurrentDirectory:",folder);[controller loadViewIfNeeded];
+    FCheck([controller.title isEqual:folder.lastPathComponent] && [DARGet(controller,@"files") containsObject:renamed],@"nested audio assistant lists its own folder");
+    UISearchBar *search=DARGet(controller,@"searchBar");search.text=@"no-such-audio";
+    [(id<UISearchBarDelegate>)controller searchBar:search textDidChange:search.text];
+    FCheck([DARGet(controller,@"files") count]==0,@"audio search filters the displayed folder");
+    search.text=@"renamed";[(id<UISearchBarDelegate>)controller searchBar:search textDidChange:search.text];
+    FCheck([DARGet(controller,@"files") containsObject:renamed],@"audio search finds the renamed file");
+    UISwipeActionsConfiguration *actions=[controller tableView:controller.tableView trailingSwipeActionsConfigurationForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];
+    FCheck(actions.actions.count==3 && !actions.performsFirstActionWithFullSwipe,@"audio rows expose delete rename and share without destructive full-swipe");
+    [controller setEditing:YES animated:NO];FCheck(controller.tableView.allowsMultipleSelectionDuringEditing && !search.userInteractionEnabled,@"batch selection keeps list filtering stable");
+    FCheck(![library renameItem:renamed name:@"../escape" error:NULL],@"audio rename refuses path traversal");
+    FCheck([library removeFile:folder error:&error] && ![NSFileManager.defaultManager fileExistsAtPath:renamed.path],@"folder deletion removes its audio contents");
+    [NSFileManager.defaultManager removeItemAtURL:outside error:NULL];
+}
 static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completion)(NSError *)) {
     UITableViewController *controller=[[NSClassFromString(@"DARLibraryController") alloc] init];
     [controller loadViewIfNeeded];
@@ -534,6 +563,7 @@ static void RunFeatureTestsWithEntry(void(^completion)(void)) {
     NSURL *imported=[library importFile:fixture name:@"../声音.wav" error:&error];
     FCheck(imported && !error && [imported.path hasPrefix:[library.directory.path stringByAppendingString:@"/"]],@"audio import stays inside the library and sanitizes file names");
     FCheck([library.files containsObject:imported],@"imported audio is visible in the library");
+    TestAudioAssistantFolders(fixture);
     NSURL *invalid=[temporary URLByAppendingPathComponent:@"bad.txt"];[@"not audio" writeToURL:invalid atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     FCheck(![library importFile:invalid name:@"invalid" error:&error],@"invalid audio import is rejected");
     FCheck(![library removeFile:fixture error:&error],@"library delete refuses files outside its directory");

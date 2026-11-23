@@ -47,7 +47,56 @@ NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
 - (NSURL *)directory { return _directory; }
 - (BOOL)contains:(NSURL *)url {
     NSString *root=[_directory URLByResolvingSymlinksInPath].path;
-    return url.isFileURL && [[url URLByResolvingSymlinksInPath].path hasPrefix:[root stringByAppendingString:@"/"]];
+    NSString *path=url.URLByResolvingSymlinksInPath.path;
+    NSString *prepared=[root stringByAppendingPathComponent:@"Prepared"];
+    return url.isFileURL && [path hasPrefix:[root stringByAppendingString:@"/"]] &&
+        ![path isEqual:prepared] && ![path hasPrefix:[prepared stringByAppendingString:@"/"]];
+}
+- (BOOL)validDirectory:(NSURL *)directory {
+    NSNumber *folder;
+    [directory getResourceValue:&folder forKey:NSURLIsDirectoryKey error:NULL];
+    return directory.isFileURL && folder.boolValue &&
+        ([directory.URLByResolvingSymlinksInPath.path isEqual:_directory.URLByResolvingSymlinksInPath.path] || [self contains:directory]);
+}
+- (BOOL)validItemName:(NSString *)name {
+    return [name isKindOfClass:NSString.class] && name.length && ![name hasPrefix:@"."] &&
+        ![name isEqual:@"Prepared"] && [name rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"/\\:\n\r"]].location==NSNotFound &&
+        [[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] isEqual:name];
+}
+- (NSArray<NSURL *> *)itemsInDirectory:(NSURL *)directory {
+    if(![self validDirectory:directory])return @[];
+    NSArray *items=[NSFileManager.defaultManager contentsOfDirectoryAtURL:directory includingPropertiesForKeys:@[NSURLIsDirectoryKey,NSURLIsRegularFileKey] options:NSDirectoryEnumerationSkipsHiddenFiles error:NULL];
+    NSMutableArray *visible=[NSMutableArray new];
+    for(NSURL *url in items) {
+        NSNumber *folder,*regular;[url getResourceValue:&folder forKey:NSURLIsDirectoryKey error:NULL];[url getResourceValue:&regular forKey:NSURLIsRegularFileKey error:NULL];
+        if([self contains:url] && (folder.boolValue || regular.boolValue))[visible addObject:url];
+    }
+    return [visible sortedArrayUsingComparator:^NSComparisonResult(NSURL *a,NSURL *b){
+        NSNumber *af,*bf;[a getResourceValue:&af forKey:NSURLIsDirectoryKey error:NULL];[b getResourceValue:&bf forKey:NSURLIsDirectoryKey error:NULL];
+        if(af.boolValue!=bf.boolValue)return af.boolValue?NSOrderedAscending:NSOrderedDescending;
+        return [a.lastPathComponent localizedStandardCompare:b.lastPathComponent];
+    }];
+}
+- (NSURL *)createFolder:(NSString *)name inDirectory:(NSURL *)directory error:(NSError **)error {
+    if(![self validDirectory:directory] || ![self validItemName:name]){if(error)*error=DARError(@"文件夹名称或位置无效");return nil;}
+    NSURL *target=[directory URLByAppendingPathComponent:name isDirectory:YES];
+    if([NSFileManager.defaultManager fileExistsAtPath:target.path]){if(error)*error=DARError(@"同名文件或文件夹已存在");return nil;}
+    return [NSFileManager.defaultManager createDirectoryAtURL:target withIntermediateDirectories:NO attributes:nil error:error]?target:nil;
+}
+- (void)cancelPendingForItem:(NSURL *)file {
+    @synchronized(self) {
+        NSString *path=file.URLByResolvingSymlinksInPath.path,*pending=_pendingSource.URLByResolvingSymlinksInPath.path;
+        if([pending isEqual:path] || [pending hasPrefix:[path stringByAppendingString:@"/"]])[self cancelPending];
+    }
+}
+- (NSURL *)renameItem:(NSURL *)file name:(NSString *)name error:(NSError **)error {
+    if(![self contains:file] || ![self validItemName:name]){if(error)*error=DARError(@"名称或文件位置无效");return nil;}
+    NSNumber *folder;[file getResourceValue:&folder forKey:NSURLIsDirectoryKey error:NULL];
+    if(!folder.boolValue && file.pathExtension.length && ![name.pathExtension.lowercaseString isEqual:file.pathExtension.lowercaseString])name=[name stringByAppendingPathExtension:file.pathExtension];
+    NSURL *target=[file.URLByDeletingLastPathComponent URLByAppendingPathComponent:name];
+    if([file.path isEqual:target.path])return file;
+    if(![NSFileManager.defaultManager moveItemAtURL:file toURL:target error:error])return nil;
+    [self cancelPendingForItem:file];return target;
 }
 - (NSArray<NSURL *> *)files {
     NSArray *items=[NSFileManager.defaultManager contentsOfDirectoryAtURL:_directory includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLContentModificationDateKey] options:NSDirectoryEnumerationSkipsHiddenFiles error:NULL];
@@ -56,6 +105,10 @@ NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
     return [files sortedArrayUsingComparator:^NSComparisonResult(NSURL *a,NSURL *b){ return [a.lastPathComponent localizedStandardCompare:b.lastPathComponent]; }];
 }
 - (NSURL *)importFile:(NSURL *)source name:(NSString *)name error:(NSError **)error {
+    return [self importFile:source name:name intoDirectory:_directory error:error];
+}
+- (NSURL *)importFile:(NSURL *)source name:(NSString *)name intoDirectory:(NSURL *)directory error:(NSError **)error {
+    if(![self validDirectory:directory]){if(error)*error=DARError(@"导入位置无效");return nil;}
     if(!source.isFileURL){if(error)*error=DARError(@"请选择本地音频文件");return nil;}
     NSNumber *size; [source getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
     AVURLAsset *asset=[AVURLAsset URLAssetWithURL:source options:nil];
@@ -68,15 +121,15 @@ NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
     if(!base.length)base=@"音频"; if(base.length>80)base=[base substringWithRange:[base rangeOfComposedCharacterSequencesForRange:NSMakeRange(0,80)]];
     NSString *ext=source.pathExtension.lowercaseString;
     if(![@[@"mp3",@"m4a",@"aac",@"wav",@"caf",@"aiff",@"aif",@"flac",@"ogg",@"mp4"] containsObject:ext])ext=@"m4a";
-    NSURL *destination=[_directory URLByAppendingPathComponent:[base stringByAppendingPathExtension:ext]];
+    NSURL *destination=[directory URLByAppendingPathComponent:[base stringByAppendingPathExtension:ext]];
     if([NSFileManager.defaultManager fileExistsAtPath:destination.path])
-        destination=[_directory URLByAppendingPathComponent:[[base stringByAppendingFormat:@"-%@",[NSUUID.UUID.UUIDString substringToIndex:8]] stringByAppendingPathExtension:ext]];
+        destination=[directory URLByAppendingPathComponent:[[base stringByAppendingFormat:@"-%@",[NSUUID.UUID.UUIDString substringToIndex:8]] stringByAppendingPathExtension:ext]];
     return [NSFileManager.defaultManager copyItemAtURL:source toURL:destination error:error]?destination:nil;
 }
 - (BOOL)removeFile:(NSURL *)file error:(NSError **)error {
     if(![self contains:file]) { if(error)*error=DARError(@"文件不在音频库中"); return NO; }
-    @synchronized(self) { if([file.URLByResolvingSymlinksInPath.path isEqual:_pendingSource.URLByResolvingSymlinksInPath.path])[self cancelPending]; }
-    return [NSFileManager.defaultManager removeItemAtURL:file error:error];
+    if(![NSFileManager.defaultManager removeItemAtURL:file error:error])return NO;
+    [self cancelPendingForItem:file];return YES;
 }
 - (void)download:(NSURL *)source name:(NSString *)name completion:(void(^)(NSError *))completion {
     if(![@[@"https",@"http"] containsObject:source.scheme.lowercaseString]) { completion(DARError(@"没有可用的音频地址")); return; }

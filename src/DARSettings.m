@@ -6,6 +6,7 @@
 #import "DAROptions.h"
 #import "DARRuntime.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#include <math.h>
 
 UIViewController *DARTopController(void) {
     UIWindow *window;
@@ -46,27 +47,81 @@ void DARToast(NSString *message) {
         });
     });
 }
-@interface DARLibraryController : UITableViewController <UIDocumentPickerDelegate, AVAudioPlayerDelegate>
+@interface DARLibraryController : UITableViewController <UIDocumentPickerDelegate, AVAudioPlayerDelegate, UISearchBarDelegate>
 @property(nonatomic,strong) NSArray<NSURL *> *files;
 @property(nonatomic,strong) AVAudioPlayer *player;
 @property(nonatomic,strong) NSURL *playingFile;
 @property(nonatomic,strong) NSURL *preparingFile;
 @property(nonatomic) NSUInteger prepareGeneration;
+@property(nonatomic,strong) NSURL *currentDirectory;
+@property(nonatomic,strong) UISearchBar *searchBar;
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *durations;
+@property(nonatomic) NSUInteger metadataGeneration;
+@property(nonatomic,strong) UIBarButtonItem *deleteSelectedButton;
+- (void)reload;
+- (void)renameFile:(NSURL *)file;
+- (void)shareFile:(NSURL *)file anchor:(UIView *)anchor;
+- (void)deleteFiles:(NSArray<NSURL *> *)files;
 - (void)playFile:(NSURL *)file;
 - (void)prepareFileForComment:(NSURL *)file;
 @end
 @implementation DARLibraryController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title=@"音频库";
-    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(importAudio)];
-    self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
-    self.toolbarItems=@[[[UIBarButtonItem alloc] initWithTitle:@"取消待发送音频" style:UIBarButtonItemStylePlain target:self action:@selector(cancelAudio)]];
-    [self.navigationController setToolbarHidden:NO]; self.tableView.rowHeight=64; [self reload];
+    [super viewDidLoad];
+    if(!self.currentDirectory)self.currentDirectory=DARAudioLibrary.shared.directory;
+    self.title=[self.currentDirectory isEqual:DARAudioLibrary.shared.directory]?@"音频助手":self.currentDirectory.lastPathComponent;
+    self.overrideUserInterfaceStyle=UIScreen.mainScreen.traitCollection.userInterfaceStyle;
+    self.durations=[NSMutableDictionary new];
+    UIBarButtonItem *folder=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"folder.badge.plus"] style:UIBarButtonItemStylePlain target:self action:@selector(addFolder)];folder.accessibilityLabel=@"新建文件夹";
+    UIBarButtonItem *import=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"square.and.arrow.down"] style:UIBarButtonItemStylePlain target:self action:@selector(importAudio)];import.accessibilityLabel=@"导入音频";
+    self.navigationItem.rightBarButtonItems=@[folder,import,self.editButtonItem];
+    if([self.currentDirectory isEqual:DARAudioLibrary.shared.directory])self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
+    self.deleteSelectedButton=[[UIBarButtonItem alloc] initWithTitle:@"删除所选 (0)" style:UIBarButtonItemStylePlain target:self action:@selector(deleteSelected)];self.deleteSelectedButton.tintColor=UIColor.systemRedColor;self.deleteSelectedButton.enabled=NO;
+    self.toolbarItems=@[[[UIBarButtonItem alloc] initWithTitle:@"取消待发送音频" style:UIBarButtonItemStylePlain target:self action:@selector(cancelAudio)],[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil],self.deleteSelectedButton];
+    self.searchBar=[[UISearchBar alloc] initWithFrame:CGRectMake(0,0,320,56)];self.searchBar.placeholder=@"搜索音频文件";self.searchBar.delegate=self;self.searchBar.searchBarStyle=UISearchBarStyleMinimal;self.searchBar.accessibilityIdentifier=@"DAR.audio.search";
+    self.tableView.tableHeaderView=self.searchBar;
+    self.tableView.allowsMultipleSelectionDuringEditing=YES;self.tableView.rowHeight=72;
+    [self.navigationController setToolbarHidden:NO];[self reload];
 }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self reload]; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated];[self.navigationController setToolbarHidden:NO];[self reload]; }
 - (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [self.player stop]; self.playingFile=nil; }
-- (void)reload { self.files=DARAudioLibrary.shared.files; [self.tableView reloadData]; }
+- (BOOL)isFolder:(NSURL *)file {NSNumber *value;[file getResourceValue:&value forKey:NSURLIsDirectoryKey error:NULL];return value.boolValue;}
+- (void)updateSelection {
+    NSUInteger count=self.tableView.indexPathsForSelectedRows.count;
+    self.deleteSelectedButton.title=[NSString stringWithFormat:@"删除所选 (%lu)",(unsigned long)count];self.deleteSelectedButton.enabled=count>0;
+}
+- (void)setEditing:(BOOL)editing animated:(BOOL)animated {
+    [super setEditing:editing animated:animated];self.searchBar.userInteractionEnabled=!editing;
+    [self.tableView reloadData];[self updateSelection];
+}
+- (void)reload {
+    NSArray<NSURL *> *all=[DARAudioLibrary.shared itemsInDirectory:self.currentDirectory];
+    NSString *query=self.searchBar.text?:@"";
+    self.files=query.length?[all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSURL *url,__unused NSDictionary *bindings){return [url.lastPathComponent localizedCaseInsensitiveContainsString:query];}]]:all;
+    UILabel *empty=[UILabel new];empty.text=query.length?@"没有匹配的文件":@"暂无音频，点右上角导入或新建文件夹";empty.numberOfLines=0;empty.textAlignment=NSTextAlignmentCenter;empty.textColor=UIColor.secondaryLabelColor;
+    self.tableView.backgroundView=self.files.count?nil:empty;
+    [self.tableView reloadData];[self updateSelection];
+    NSUInteger generation=++self.metadataGeneration;NSArray<NSURL *> *snapshot=self.files;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        NSMutableDictionary *values=[NSMutableDictionary new];
+        for(NSURL *url in snapshot)if(![self isFolder:url]){
+            NSTimeInterval seconds=CMTimeGetSeconds([AVURLAsset URLAssetWithURL:url options:nil].duration);
+            if(isfinite(seconds)&&seconds>0)values[url.path]=@(seconds);
+        }
+        dispatch_async(dispatch_get_main_queue(),^{if(generation==self.metadataGeneration){self.durations=values;if(!self.editing){[self.tableView reloadData];[self updateSelection];}}});
+    });
+}
+- (void)searchBar:(__unused UISearchBar *)searchBar textDidChange:(__unused NSString *)searchText {[self reload];}
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {[searchBar resignFirstResponder];}
+- (void)addFolder {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"新建文件夹" message:nil preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field){field.placeholder=@"文件夹名称";}];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"创建" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){NSError *error;[DARAudioLibrary.shared createFolder:alert.textFields.firstObject.text inDirectory:self.currentDirectory error:&error];if(error)DARToast(error.localizedDescription);[self reload];}]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
 - (void)cancelAudio {
     self.prepareGeneration++; self.preparingFile=nil; self.navigationItem.prompt=nil;
@@ -82,7 +137,7 @@ void DARToast(NSString *message) {
         NSMutableArray *errors=[NSMutableArray new];
         for(NSURL *url in urls) {
             BOOL access=[url startAccessingSecurityScopedResource];NSError *error;
-            [DARAudioLibrary.shared importFile:url name:url.lastPathComponent error:&error];
+            [DARAudioLibrary.shared importFile:url name:url.lastPathComponent intoDirectory:self.currentDirectory error:&error];
             if(access)[url stopAccessingSecurityScopedResource];if(error)[errors addObject:error.localizedDescription];
         }
         dispatch_async(dispatch_get_main_queue(),^{
@@ -92,6 +147,11 @@ void DARToast(NSString *message) {
     });
 }
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(__unused NSInteger)section { return self.files.count; }
+- (NSString *)tableView:(__unused UITableView *)tableView titleForHeaderInSection:(__unused NSInteger)section {
+    unsigned long long bytes=0;NSUInteger folders=0;
+    for(NSURL *url in self.files)if([self isFolder:url])folders++;else{NSNumber *size;[url getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];bytes+=size.unsignedLongLongValue;}
+    return [NSString stringWithFormat:@"%lu 个音频 · %lu 个文件夹 · %@",(unsigned long)(self.files.count-folders),(unsigned long)folders,[NSByteCountFormatter stringFromByteCount:(long long)bytes countStyle:NSByteCountFormatterCountStyleFile]];
+}
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(__unused NSInteger)section {
     return DARAudioLibrary.shared.armed?@"已准备下一条评论语音。返回评论区，手动录音后松开发送，评论时长默认跟随录音时长，音频内容不裁剪。5 分钟内有效，仅使用一次。":@"右侧按钮可试听或发送。发送会先准备音频，随后回评论区录音松开发送。评论时长默认跟随手动录音，音频内容保留原时长。点文件可打开更多操作。";
 }
@@ -99,8 +159,15 @@ void DARToast(NSString *message) {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"audio"];
     if(!cell)cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"audio"];
     NSURL *file=self.files[indexPath.row]; NSNumber *size; [file getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
-    cell.textLabel.text=file.lastPathComponent.stringByDeletingPathExtension;
+    BOOL folder=[self isFolder:file];
+    cell.imageView.image=[UIImage systemImageNamed:folder?@"folder.fill":@"waveform"];
+    cell.imageView.tintColor=folder?UIColor.systemOrangeColor:UIColor.systemBlueColor;
+    cell.textLabel.text=folder?file.lastPathComponent:file.lastPathComponent.stringByDeletingPathExtension;
     cell.detailTextLabel.text=[NSString stringWithFormat:@"%@ · %@",file.pathExtension.uppercaseString,[NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]];
+    NSNumber *seconds=self.durations[file.path];
+    if(seconds)cell.detailTextLabel.text=[cell.detailTextLabel.text stringByAppendingFormat:@" · %.1f 秒",seconds.doubleValue];
+    if(folder){cell.detailTextLabel.text=@"文件夹";cell.accessoryView=nil;cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;return cell;}
+    if(self.editing){cell.accessoryView=nil;cell.accessoryType=UITableViewCellAccessoryNone;return cell;}
     cell.textLabel.numberOfLines=1; cell.textLabel.lineBreakMode=NSLineBreakByTruncatingTail;
     __weak typeof(self) weakSelf=self;
     UIButton *play=[UIButton buttonWithType:UIButtonTypeSystem];
@@ -157,21 +224,62 @@ void DARToast(NSString *message) {
         [self presentViewController:ready animated:YES completion:nil];
     }];
 }
+- (void)stopForFile:(NSURL *)file {
+    NSString *path=file.path;
+    if([self.playingFile.path isEqual:path] || [self.playingFile.path hasPrefix:[path stringByAppendingString:@"/"]]){[self.player stop];self.playingFile=nil;}
+    if([self.preparingFile.path isEqual:path] || [self.preparingFile.path hasPrefix:[path stringByAppendingString:@"/"]]){self.prepareGeneration++;self.preparingFile=nil;self.navigationItem.prompt=nil;}
+}
+- (void)renameFile:(NSURL *)file {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"重命名" message:nil preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field){field.text=file.lastPathComponent;}];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){NSError *error;NSURL *renamed=[DARAudioLibrary.shared renameItem:file name:alert.textFields.firstObject.text error:&error];if(renamed)[self stopForFile:file];if(error)DARToast(error.localizedDescription);[self reload];}]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)shareFile:(NSURL *)file anchor:(UIView *)anchor {
+    UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:@[file] applicationActivities:nil];
+    share.popoverPresentationController.sourceView=anchor?:self.view;share.popoverPresentationController.sourceRect=anchor?anchor.bounds:CGRectMake(CGRectGetMidX(self.view.bounds),CGRectGetMidY(self.view.bounds),1,1);
+    [self presentViewController:share animated:YES completion:nil];
+}
+- (void)deleteFiles:(NSArray<NSURL *> *)files {
+    if(!files.count)return;
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"删除所选文件？" message:@"删除文件夹也会删除其中的音频，此操作无法撤销。" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action){
+        NSMutableArray *errors=[NSMutableArray new];
+        for(NSURL *file in files){NSError *error;if([DARAudioLibrary.shared removeFile:file error:&error])[self stopForFile:file];if(error)[errors addObject:error.localizedDescription];}
+        if(errors.count)DARToast(errors.firstObject);[self setEditing:NO animated:YES];[self reload];
+    }]];[self presentViewController:alert animated:YES completion:nil];
+}
+- (void)deleteSelected {
+    NSMutableArray *selected=[NSMutableArray new];for(NSIndexPath *index in self.tableView.indexPathsForSelectedRows)if(index.row<(NSInteger)self.files.count)[selected addObject:self.files[index.row]];
+    [self deleteFiles:selected];
+}
+- (void)tableView:(__unused UITableView *)tableView didDeselectRowAtIndexPath:(__unused NSIndexPath *)indexPath {[self updateSelection];}
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES]; NSURL *file=self.files[indexPath.row];
-    UIAlertController *actions=[UIAlertController alertControllerWithTitle:file.lastPathComponent.stringByDeletingPathExtension message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    if(self.editing){[self updateSelection];return;}
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];NSURL *file=self.files[indexPath.row];
+    if([self isFolder:file]){DARLibraryController *next=[DARLibraryController new];next.currentDirectory=file;[self.navigationController pushViewController:next animated:YES];return;}
+    UIView *anchor=[tableView cellForRowAtIndexPath:indexPath];
+    UIAlertController *actions=[UIAlertController alertControllerWithTitle:file.lastPathComponent message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     [actions addAction:[UIAlertAction actionWithTitle:@"试听" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self playFile:file];}]];
     [actions addAction:[UIAlertAction actionWithTitle:@"用于下一条评论语音" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self prepareFileForComment:file];}]];
-    [actions addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action){
-        if([self.playingFile isEqual:file]){[self.player stop];self.playingFile=nil;}
-        if([self.preparingFile isEqual:file]){self.prepareGeneration++;self.preparingFile=nil;self.navigationItem.prompt=nil;}
-        NSError *error; [DARAudioLibrary.shared removeFile:file error:&error]; if(error)DARToast(error.localizedDescription); [self reload];
-    }]];
+    [actions addAction:[UIAlertAction actionWithTitle:@"重命名" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self renameFile:file];}]];
+    [actions addAction:[UIAlertAction actionWithTitle:@"分享" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self shareFile:file anchor:anchor];}]];
+    [actions addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action){[self deleteFiles:@[file]];}]];
     [actions addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    actions.popoverPresentationController.sourceView=[tableView cellForRowAtIndexPath:indexPath];
-    actions.popoverPresentationController.sourceRect=[tableView cellForRowAtIndexPath:indexPath].bounds;
+    actions.popoverPresentationController.sourceView=anchor;actions.popoverPresentationController.sourceRect=anchor.bounds;
     [self presentViewController:actions animated:YES completion:nil];
 }
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
+    NSURL *file=self.files[indexPath.row];UIView *anchor=[tableView cellForRowAtIndexPath:indexPath];
+    UIContextualAction *rename=[UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:@"重命名" handler:^(__unused UIContextualAction *action,__unused UIView *view,void(^done)(BOOL)){done(YES);[self renameFile:file];}];
+    UIContextualAction *remove=[UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"删除" handler:^(__unused UIContextualAction *action,__unused UIView *view,void(^done)(BOOL)){done(YES);[self deleteFiles:@[file]];}];
+    NSMutableArray *actions=[NSMutableArray arrayWithObjects:remove,rename,nil];
+    if(![self isFolder:file]){UIContextualAction *share=[UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:@"分享" handler:^(__unused UIContextualAction *action,__unused UIView *view,void(^done)(BOOL)){done(YES);[self shareFile:file anchor:anchor];}];share.backgroundColor=UIColor.systemPurpleColor;[actions addObject:share];}
+    UISwipeActionsConfiguration *config=[UISwipeActionsConfiguration configurationWithActions:actions];config.performsFirstActionWithFullSwipe=NO;return config;
+}
+
 @end
 void DAROpenAudioLibrary(UIViewController *presenter) {
     if(!presenter)presenter=DARTopController(); if(!presenter)return;
@@ -190,7 +298,7 @@ void DAROpenAudioLibrary(UIViewController *presenter) {
 - (NSArray *)rows { return @[
     @[@[@"消息防撤回",DAROptionAntiRecall],@[@"显示已撤回标记",DAROptionBadge]],
     @[@[@"显示 IP 属地",DAROptionIP]],
-    @[@[@"视频音频入库",DAROptionAudioLibrary],@[@"评论区发送库内音频",DAROptionCommentAudio],@[@"评论时长跟随手动录音",DAROptionManualAudioDuration],@[@"打开音频库",@"library"]],
+    @[@[@"视频音频入库",DAROptionAudioLibrary],@[@"评论区发送库内音频",DAROptionCommentAudio],@[@"评论时长跟随手动录音",DAROptionManualAudioDuration],@[@"打开音频助手",@"library"]],
     @[@[@"无水印保存图文",DAROptionImages],@[@"评论图片无水印",DAROptionCommentImages]],
     @[@[@"查看登录诊断",@"diagnostics"],@[@"消息通知修复",@"notifications"]]]; }
 - (NSInteger)numberOfSectionsInTableView:(__unused UITableView *)tableView { return self.rows.count; }
