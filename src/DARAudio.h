@@ -7,6 +7,7 @@ FOUNDATION_EXPORT NSString *DARAudioExtensionForDownload(NSURL *url, NSString *M
 @property(nonatomic, readonly) NSURL *directory;
 @property(nonatomic, readonly) BOOL armed;
 @property(nonatomic, readonly) NSTimeInterval preparedDuration;
+@property(nonatomic, readonly) BOOL preparedUsesFileDuration;
 - (NSArray<NSURL *> *)files;
 - (NSArray<NSURL *> *)itemsInDirectory:(NSURL *)directory;
 - (NSURL *)createFolder:(NSString *)name inDirectory:(NSURL *)directory error:(NSError **)error;
@@ -16,6 +17,7 @@ FOUNDATION_EXPORT NSString *DARAudioExtensionForDownload(NSURL *url, NSString *M
 - (void)download:(NSURL *)source name:(NSString *)name completion:(void(^)(NSError *error))completion;
 - (BOOL)removeFile:(NSURL *)file error:(NSError **)error;
 - (void)prepareFile:(NSURL *)file completion:(void(^)(NSError *error))completion;
+- (void)prepareFile:(NSURL *)file maxDuration:(NSTimeInterval)maxDuration completion:(void(^)(NSError *error))completion;
 - (void)cancelPending;
 - (BOOL)replaceCommentRecording:(NSURL *)recording error:(NSError **)error;
 @end

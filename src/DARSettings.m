@@ -64,6 +64,7 @@ void DARToast(NSString *message) {
 - (void)deleteFiles:(NSArray<NSURL *> *)files;
 - (void)playFile:(NSURL *)file;
 - (void)prepareFileForComment:(NSURL *)file;
+- (void)beginPreparingFile:(NSURL *)file maxDuration:(NSTimeInterval)maxDuration;
 @end
 @implementation DARLibraryController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
@@ -209,17 +210,28 @@ void DARToast(NSString *message) {
 }
 - (void)prepareFileForComment:(NSURL *)file {
     if(self.preparingFile){DARToast(@"音频正在准备，请稍候");return;}
+    NSNumber *duration=self.durations[file.path];
+    if(duration && duration.doubleValue<=29.5){[self beginPreparingFile:file maxDuration:0];return;}
+    UIAlertController *choice=[UIAlertController alertControllerWithTitle:@"选择发送方式" message:@"长音频可能被评论服务拒绝。兼容发送仅使用前 29.5 秒，并使用实际文件时长；音频库中的原文件保持完整。" preferredStyle:UIAlertControllerStyleAlert];
+    [choice addAction:[UIAlertAction actionWithTitle:@"兼容发送（最长 29.5 秒）" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self beginPreparingFile:file maxDuration:29.5];}]];
+    [choice addAction:[UIAlertAction actionWithTitle:@"仍使用完整音频" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self beginPreparingFile:file maxDuration:0];}]];
+    [choice addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:choice animated:YES completion:nil];
+}
+- (void)beginPreparingFile:(NSURL *)file maxDuration:(NSTimeInterval)maxDuration {
+    if(self.preparingFile){DARToast(@"音频正在准备，请稍候");return;}
     [self.player stop]; self.playingFile=nil;
     self.preparingFile=file; NSUInteger generation=++self.prepareGeneration;
     self.navigationItem.prompt=@"正在准备音频…"; [self.tableView reloadData];
     __weak typeof(self) weakSelf=self;
-    [DARAudioLibrary.shared prepareFile:file completion:^(NSError *error){
+    [DARAudioLibrary.shared prepareFile:file maxDuration:maxDuration completion:^(NSError *error){
         DARLibraryController *self=weakSelf;
         if(!self || generation!=self.prepareGeneration)return;
         self.preparingFile=nil; self.navigationItem.prompt=nil; [self reload];
         if(error){DARToast(error.localizedDescription);return;}
         if(!self.view.window || self.presentedViewController){DARToast(@"下一条评论音频已准备，回评论区手动录音松开发送");return;}
-        UIAlertController *ready=[UIAlertController alertControllerWithTitle:@"音频已准备" message:@"返回评论区手动录音后松开。默认使用本次手动录音的评论时长，音频文件保留原长度；关闭“评论时长跟随手动录音”可使用库内音频时长。仅替换下一次评论语音，5 分钟内有效。" preferredStyle:UIAlertControllerStyleAlert];
+        NSString *instructions=maxDuration>0?@"已准备最长 29.5 秒的发送副本，并使用副本实际时长。返回评论区手动录音后松开。原文件未修改；仅替换下一次评论语音，5 分钟内有效。":@"返回评论区手动录音后松开。完整音频按现有时长开关处理；长音频仍可能发送失败。仅替换下一次评论语音，5 分钟内有效。";
+        UIAlertController *ready=[UIAlertController alertControllerWithTitle:@"音频已准备" message:instructions preferredStyle:UIAlertControllerStyleAlert];
         [ready addAction:[UIAlertAction actionWithTitle:@"完成" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){[self close];}]];
         [self presentViewController:ready animated:YES completion:nil];
     }];
@@ -305,7 +317,7 @@ void DAROpenAudioLibrary(UIViewController *presenter) {
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self.rows[section] count]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForHeaderInSection:(NSInteger)section { return @[@"消息",@"视频信息",@"音频",@"图片",@"诊断"][section]; }
 - (NSString *)tableView:(__unused UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次。默认评论时长跟随手动录音，音频内容保留原时长、不截断。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，有有效拍摄日期时按该日期存入相册；缺失时使用系统默认时间。评论图片开关让原生保存使用原图地址；图片像素本身已有水印无法移除。需允许添加到相册。",@"消息通知修复可申请权限、重新发起推送注册、测试本地提醒；不保证重签身份的远程消息能送达。登录诊断仅保留最近 16 条错误码和处理路径，重启清空。诊断入口位于本设置页，不显示悬浮按钮。\nv0.2.12 · 适配抖音 41.2.0（412021）"][section];
+    return @[@"防撤回处理之后收到的消息；关闭标记会立即隐藏灰色标签。",@"在视频时间旁显示 IP 属地。切换后可滑到下一条视频查看。",@"长按视频可将音乐入库。音频库支持导入、试听、删除和准备下一条评论语音；待发送音频仅使用一次。默认评论时长跟随手动录音，音频内容保留原时长、不截断。",@"长按图文视频，选择保存当前原图或整组图片。使用服务端原图链接，有有效拍摄日期时按该日期存入相册；缺失时使用系统默认时间。评论图片开关让原生保存使用原图地址；图片像素本身已有水印无法移除。需允许添加到相册。",@"消息通知修复可申请权限、重新发起推送注册、测试本地提醒；不保证重签身份的远程消息能送达。登录诊断仅保留最近 16 条错误码和处理路径，重启清空。诊断入口位于本设置页，不显示悬浮按钮。\nv0.2.13 · 适配抖音 41.2.0（412021）"][section];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"option"];

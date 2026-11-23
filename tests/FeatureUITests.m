@@ -468,8 +468,17 @@ static void TestManualAudioDuration(void(^completion)(void)) {
             id manager=[[NSClassFromString(@"_TtC31AWECommentMediaManagerSwiftImpl27CommentMediaUploaderManager") alloc] init];
             ((id(*)(id,SEL,id))objc_msgSend)(manager,NSSelectorFromString(@"audioUploader:"),input);
             FCheck(input.duration==2500 && input.currentTime==2.5 && CMTimeGetSeconds([AVURLAsset URLAssetWithURL:recording options:nil].duration)>31.9,@"modern upload retains native manual duration fields and the complete audio file");
-            [DARAudioLibrary.shared removeFile:file error:NULL];[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
-            DARSetOption(DAROptionCommentAudio,NO);completion();
+            [DARAudioLibrary.shared prepareFile:file maxDuration:29.5 completion:^(NSError *clipError){
+                FCheck(!clipError && DARAudioLibrary.shared.preparedUsesFileDuration && fabs(DARAudioLibrary.shared.preparedDuration-29.5)<0.1,@"compatibility preparation caps the actual 32-second asset and uses measured output duration");
+                [sourceBytes writeToURL:recording atomically:YES];
+                recorder.currentTime=1.25;
+                [controller audioRecorderDidFinishRecording:recorder success:YES error:nil];
+                NSTimeInterval clipped=CMTimeGetSeconds([AVURLAsset URLAssetWithURL:recording options:nil].duration);
+                FCheck(fabs(clipped-29.5)<0.1 && fabs(controller.observedDuration-clipped)<0.01 && !DARAudioLibrary.shared.preparedUsesFileDuration,@"compatibility send uses the clipped duration even when manual duration is enabled and clears one-shot state");
+                FCheck([[NSData dataWithContentsOfURL:source] isEqual:sourceBytes] && CMTimeGetSeconds([AVURLAsset URLAssetWithURL:file options:nil].duration)>31.9,@"compatibility trimming preserves both original and imported full-length audio");
+                [DARAudioLibrary.shared removeFile:file error:NULL];[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+                DARSetOption(DAROptionCommentAudio,NO);completion();
+            }];
         }];
     }];
 }
@@ -516,6 +525,7 @@ static void TestAudioRowControls(NSURL *imported, NSURL *fixture, void(^completi
     UITableViewController *controller=[[NSClassFromString(@"DARLibraryController") alloc] init];
     [controller loadViewIfNeeded];
     DARPut(controller,@"setFiles:",@[imported]);
+    DARPut(controller,@"setDurations:",@{imported.path:@2});
     NSIndexPath *index=[NSIndexPath indexPathForRow:0 inSection:0];
     UITableViewCell *cell=[controller.tableView.dataSource tableView:controller.tableView cellForRowAtIndexPath:index];
     cell.frame=CGRectMake(0,0,320,64);[cell layoutIfNeeded];

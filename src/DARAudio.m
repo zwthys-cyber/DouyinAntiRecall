@@ -21,6 +21,7 @@ NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
     NSURL *_pendingSource;
     NSMutableDictionary *_replacedFiles;
     NSTimeInterval _duration;
+    BOOL _pendingUsesFileDuration;
     NSUInteger _generation;
     id _optionObserver;
 }
@@ -153,10 +154,15 @@ NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
 }
 - (BOOL)armed { @synchronized(self) { return _pending && _expires.timeIntervalSinceNow>0 && DAROptionEnabled(DAROptionCommentAudio); } }
 - (NSTimeInterval)preparedDuration { @synchronized(self) { return _duration; } }
+- (BOOL)preparedUsesFileDuration { @synchronized(self) { return _pendingUsesFileDuration; } }
 - (void)cancelPending {
-    @synchronized(self) { _generation++; if(_pending)[NSFileManager.defaultManager removeItemAtURL:_pending error:NULL]; _pending=nil; _pendingSource=nil; _expires=nil; _armedAt=nil; _duration=0; }
+    @synchronized(self) { _generation++; if(_pending)[NSFileManager.defaultManager removeItemAtURL:_pending error:NULL]; _pending=nil; _pendingSource=nil; _expires=nil; _armedAt=nil; _duration=0; _pendingUsesFileDuration=NO; }
 }
 - (void)prepareFile:(NSURL *)file completion:(void(^)(NSError *))completion {
+    [self prepareFile:file maxDuration:0 completion:completion];
+}
+- (void)prepareFile:(NSURL *)file maxDuration:(NSTimeInterval)maxDuration completion:(void(^)(NSError *))completion {
+    if(!isfinite(maxDuration)||maxDuration<0){completion(DARError(@"无效的音频裁剪时长"));return;}
     if(!DAROptionEnabled(DAROptionCommentAudio) || ![self contains:file]) { completion(DARError(@"请先开启评论音频发送，并选择音频库中的文件")); return; }
     [self cancelPending]; __block NSUInteger generation; @synchronized(self){generation=_generation;_pendingSource=file;}
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
@@ -169,11 +175,14 @@ NSString *DARAudioExtensionForDownload(NSURL *url,NSString *MIMEType) {
         AVAssetExportSession *session=[[AVAssetExportSession alloc] initWithAsset:asset presetName:AVAssetExportPresetAppleM4A];
         if(!session) {dispatch_async(dispatch_get_main_queue(),^{completion(DARError(@"该音频无法转换"));});return;}
         session.outputURL=output; session.outputFileType=AVFileTypeAppleM4A;
+        if(maxDuration>0)session.timeRange=CMTimeRangeMake(kCMTimeZero,CMTimeMakeWithSeconds(MIN(duration,maxDuration),600));
         [session exportAsynchronouslyWithCompletionHandler:^{
             NSError *error=session.status==AVAssetExportSessionStatusCompleted?nil:(session.error?:DARError(@"音频转换失败"));
+            NSTimeInterval actual=error?0:CMTimeGetSeconds([AVURLAsset URLAssetWithURL:output options:nil].duration);
+            if(!error && (!isfinite(actual)||actual<=0))error=DARError(@"转换后的音频时长无效");
             @synchronized(self) {
                 if(generation!=self->_generation || !DAROptionEnabled(DAROptionCommentAudio))error=DARError(@"已取消待发送音频");
-                if(!error) { self->_pending=output; self->_duration=duration; self->_armedAt=[NSDate date]; self->_expires=[NSDate dateWithTimeIntervalSinceNow:300]; }
+                if(!error) { self->_pending=output; self->_duration=actual; self->_pendingUsesFileDuration=maxDuration>0; self->_armedAt=[NSDate date]; self->_expires=[NSDate dateWithTimeIntervalSinceNow:300]; }
                 else [NSFileManager.defaultManager removeItemAtURL:output error:NULL];
             }
             dispatch_async(dispatch_get_main_queue(),^{completion(error);});
@@ -211,8 +220,9 @@ static IMP DAROriginalCommentFinish, DAROriginalCommentUpload, DAROriginalModern
 static void DARCommentFinish(id self,SEL selector,id recorder,BOOL success,id error) {
     if(success && !error && !DARNumber(recorder,@"hasCancelled") && DAROptionEnabled(DAROptionCommentAudio)) {
         DARAudioLibrary *library=DARAudioLibrary.shared; NSTimeInterval duration=library.preparedDuration;
+        BOOL useFileDuration=library.preparedUsesFileDuration || !DAROptionEnabled(DAROptionManualAudioDuration);
         NSURL *url=DARGet(recorder,@"url");
-        if([url isKindOfClass:NSURL.class] && [library replaceCommentRecording:url error:NULL] && !DAROptionEnabled(DAROptionManualAudioDuration))DARPutNumber(recorder,@"setCurrentTime:",duration);
+        if([url isKindOfClass:NSURL.class] && [library replaceCommentRecording:url error:NULL] && useFileDuration)DARPutNumber(recorder,@"setCurrentTime:",duration);
     }
     ((void(*)(id,SEL,id,BOOL,id))DAROriginalCommentFinish)(self,selector,recorder,success,error);
 }
@@ -231,9 +241,10 @@ static id DARModernCommentUploader(id self,SEL selector,id input) {
             id value=DARGet(model,@"audioFilePath")?:DARGet(model,@"filePath")?:DARGet(model,@"fileURL");
             NSURL *url=[value isKindOfClass:NSURL.class]?value:([value isKindOfClass:NSString.class]?[NSURL fileURLWithPath:value]:nil);
             NSTimeInterval duration=DARAudioLibrary.shared.preparedDuration;
+            BOOL useFileDuration=DARAudioLibrary.shared.preparedUsesFileDuration || !DAROptionEnabled(DAROptionManualAudioDuration);
             if(url && [DARAudioLibrary.shared replaceCommentRecording:url error:NULL]) {
                 Class audioClass=NSClassFromString(@"AWECommentAudioModel");
-                if(!DAROptionEnabled(DAROptionManualAudioDuration) && audioClass && [model isKindOfClass:audioClass]) {
+                if(useFileDuration && audioClass && [model isKindOfClass:audioClass]) {
                     // 41.2.0 sendRecordMessageOrNot (0xfea1060) multiplies
                     // recorder seconds by 1000 before writing this integer field.
                     DARPutNumber(model,@"setDuration:",floor(duration*1000.0));
